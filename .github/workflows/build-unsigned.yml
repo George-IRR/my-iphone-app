@@ -1,0 +1,68 @@
+name: Build Unsigned iOS App
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build_unsigned_ipa:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Native iOS Directories (Prebuild)
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+        env:
+          COCOAPODS_DISABLE_STATS: true
+
+      - name: Compile Unsigned Binary using xcodebuild
+        run: |
+          # Dynamically extract the generated workspace name
+          WORKSPACE=$(ls ios/*.xcworkspace | head -n 1)
+          # Dynamically extract the primary application scheme name
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list | sed -n '/Schemes:/,$p' | tail -n +2 | head -n 1 | xargs)
+          
+          echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
+          
+          xcodebuild -workspace "$WORKSPACE" \
+                     -scheme "$SCHEME" \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     -derivedDataPath build_output \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGN_ENTITLEMENTS="" \
+                     PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Package .app into Unsigned .ipa Archive
+        run: |
+          mkdir -p Payload
+          # Copy the compiled architecture binary folder to the standard payload structure
+          cp -r build_output/Build/Products/Release-iphoneos/*.app Payload/
+          # Compress the structure and modify extension to target mobile OS structures
+          zip -r unsigned-app.ipa Payload
+          
+      - name: Upload Unsigned IPA Production Artifact
+        uses: actions/artifacts@v4
+        with:
+          name: unsigned-ios-ipa
+          path: unsigned-app.ipa
+          retention-days: 7
