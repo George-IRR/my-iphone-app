@@ -80,6 +80,23 @@ export async function scheduleTaskNotifications(
     console.warn('Notifications permission not granted. Alarms will not schedule.');
     return;
   }
+
+  // 3. Budget validation: Keep under OS caps (iOS limit 64)
+  try {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    const currentCount = scheduled.length;
+    
+    if (currentCount + alertStrings.length > 60) {
+      console.warn(`Local notifications budget warning: scheduling these alerts would exceed the OS limit of 64. Current active: ${currentCount}, requesting: ${alertStrings.length}. Truncating alerts request.`);
+      const spaceLeft = Math.max(0, 60 - currentCount);
+      alertStrings = alertStrings.slice(0, spaceLeft);
+      if (alertStrings.length === 0) {
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to validate scheduled notifications budget:', err);
+  }
   
   // 3. Register each alert string
   for (const alertStr of alertStrings) {

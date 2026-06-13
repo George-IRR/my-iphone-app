@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AppState } from 'react-native';
 import { Task, TaskType } from '../types';
 import {
   readTasks,
@@ -52,6 +53,21 @@ export function useTaskEngine() {
       if (didReset || !lastActive) {
         await writeTasks(updatedTasks);
         await writeLastActiveDate(todayStr);
+
+        // Prune completion logs older than 365 days to prevent file size inflation
+        try {
+          const logs = await readCompletions();
+          const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+          const prunedLogs = logs.filter(log => {
+            const logTime = new Date(log.completedDate).getTime();
+            return isNaN(logTime) || logTime >= oneYearAgo;
+          });
+          if (prunedLogs.length !== logs.length) {
+            await writeCompletions(prunedLogs);
+          }
+        } catch (pruneErr) {
+          console.error('Failed to prune completions history:', pruneErr);
+        }
       }
 
       setTasks(updatedTasks);
@@ -65,6 +81,17 @@ export function useTaskEngine() {
 
   useEffect(() => {
     loadTasksData();
+
+    // Listen to AppState transitions (e.g. background to active) to evaluate midnight boundary reset
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        loadTasksData();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [loadTasksData]);
 
   const addTask = async (title: string, type: TaskType, alerts: string[] = []) => {

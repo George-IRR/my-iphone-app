@@ -205,13 +205,29 @@ export async function readTasks(): Promise<Task[]> {
   }
 }
 
+// Serialization queue to prevent concurrent resource contention on file I/O operations
+let writeQueue = Promise.resolve();
+
+async function enqueueWrite(op: () => Promise<void>): Promise<void> {
+  writeQueue = writeQueue.then(async () => {
+    try {
+      await op();
+    } catch (err) {
+      console.error('CSV File System Serialization Write Error:', err);
+    }
+  });
+  return writeQueue;
+}
+
 export async function writeTasks(tasks: Task[]): Promise<void> {
-  try {
-    const csvContent = serializeTasksToCsv(tasks);
-    await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
-  } catch (error) {
-    console.error('Error writing tasks CSV:', error);
-  }
+  return enqueueWrite(async () => {
+    try {
+      const csvContent = serializeTasksToCsv(tasks);
+      await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
+    } catch (error) {
+      console.error('Error writing tasks CSV:', error);
+    }
+  });
 }
 
 export async function readCompletions(): Promise<CompletionLog[]> {
@@ -229,12 +245,14 @@ export async function readCompletions(): Promise<CompletionLog[]> {
 }
 
 export async function writeCompletions(logs: CompletionLog[]): Promise<void> {
-  try {
-    const csvContent = serializeCompletionsToCsv(logs);
-    await FileSystem.writeAsStringAsync(COMPLETIONS_FILE_URI, csvContent);
-  } catch (error) {
-    console.error('Error writing completions CSV:', error);
-  }
+  return enqueueWrite(async () => {
+    try {
+      const csvContent = serializeCompletionsToCsv(logs);
+      await FileSystem.writeAsStringAsync(COMPLETIONS_FILE_URI, csvContent);
+    } catch (error) {
+      console.error('Error writing completions CSV:', error);
+    }
+  });
 }
 
 export async function readLastActiveDate(): Promise<string | null> {
