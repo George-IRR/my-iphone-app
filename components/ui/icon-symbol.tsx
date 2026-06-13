@@ -27,6 +27,7 @@ const MAPPING = {
   'calendar.fill': 'calendar-today',
   'calendar': 'event',
   'clock.fill': 'access-time',
+  'gearshape': 'settings',
 } as IconMapping;
 
 /**

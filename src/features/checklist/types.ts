@@ -1,6 +1,7 @@
 export type TaskType = 'daily' | 'onetime';
 
 export interface Task {
+  uuid: string;
   id: string;
   title: string;
   type: TaskType;

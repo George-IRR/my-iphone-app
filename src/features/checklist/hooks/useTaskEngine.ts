@@ -8,6 +8,8 @@ import {
   writeCompletions,
   readLastActiveDate,
   writeLastActiveDate,
+  enforceLogSizeLimit,
+  generateUuid,
 } from '../../../services/csvStorage';
 import {
   scheduleTaskNotifications,
@@ -23,6 +25,9 @@ export function useTaskEngine() {
     try {
       setLoading(true);
       setError(null);
+
+      // Enforce trace log size cap validation on app initialization
+      await enforceLogSizeLimit();
 
       const lastActive = await readLastActiveDate();
       const activeTasks = await readTasks();
@@ -100,6 +105,7 @@ export function useTaskEngine() {
       const taskId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       const newTask: Task = {
+        uuid: generateUuid(),
         id: taskId,
         title: title.trim(),
         type,
