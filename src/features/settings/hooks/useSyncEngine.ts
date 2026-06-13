@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DataDiff, SyncEngineState } from '../types';
 import { Task } from '../../checklist/types';
@@ -117,7 +117,7 @@ export function useSyncEngine(onSyncComplete?: () => void) {
           if (localTask.type !== extTask.type) modifiedFields.push('type');
           if (localTask.completed !== extTask.completed) modifiedFields.push('completed');
           
-          const alertsMatch = JSON.stringify(localTask.alerts.sort()) === JSON.stringify(extTask.alerts.sort());
+          const alertsMatch = JSON.stringify([...localTask.alerts].sort()) === JSON.stringify([...extTask.alerts].sort());
           if (!alertsMatch) modifiedFields.push('alerts');
 
           if (modifiedFields.length > 0) {

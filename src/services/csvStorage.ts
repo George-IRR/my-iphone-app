@@ -1,9 +1,11 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
+import * as Crypto from 'expo-crypto';
 import { Task, CompletionLog } from '../features/checklist/types';
 
-const TASKS_FILE_URI = FileSystem.documentDirectory + 'tasks.csv';
-const COMPLETIONS_FILE_URI = FileSystem.documentDirectory + 'completions.csv';
-const LAST_ACTIVE_FILE_URI = FileSystem.documentDirectory + 'last_active.txt';
+const tasksFile = new File(Paths.document, 'tasks.csv');
+const completionsFile = new File(Paths.document, 'completions.csv');
+const lastActiveFile = new File(Paths.document, 'last_active.txt');
+const traceLogFile = new File(Paths.document, 'mirror_trace.log');
 
 /**
  * Escapes a string value to be RFC 4180 CSV compliant.
@@ -73,14 +75,10 @@ export function parseCsv(csvText: string): string[][] {
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 /**
- * Generates a cryptographically random UUID v4.
+ * Generates a cryptographically random UUID v4 using native expo-crypto.
  */
 export function generateUuid(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return Crypto.randomUUID();
 }
 
 /**
@@ -103,7 +101,7 @@ export function serializeTasksToCsv(tasks: Task[]): string {
 }
 
 /**
- * Deserializes CSV string into task items.
+ * Deserializes CSV string into task items with legacy shift logic.
  */
 export function deserializeCsvToTasks(csvText: string): Task[] {
   const rows = parseCsv(csvText);
@@ -139,7 +137,6 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
     const isFirstElementUuid = UUID_REGEX.test(firstElement);
     
     if (hasUuidHeader && isFirstElementUuid) {
-      // Standard new layout
       uuidVal = row[uuidIdx] || generateUuid();
       idVal = idIdx !== -1 ? row[idIdx] : uuidVal;
       titleVal = titleIdx !== -1 ? row[titleIdx] : '';
@@ -158,8 +155,6 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
         }
       }
     } else {
-      // Legacy layout: Shift elements and generate a random UUID
-      // Legacy CSV: id,title,type,completed,completed_date,created_date,alerts
       uuidVal = generateUuid();
       idVal = idIdx !== -1 ? (row[idIdx] || uuidVal) : (row[0] || uuidVal);
       titleVal = titleIdx !== -1 ? row[titleIdx] : (row[1] || '');
@@ -235,15 +230,14 @@ export function deserializeCsvToCompletions(csvText: string): CompletionLog[] {
   return logs;
 }
 
-// File System CRUD implementations
+// File System CRUD implementations using Modern File and Directory API
 
 export async function readTasks(): Promise<Task[]> {
   try {
-    const info = await FileSystem.getInfoAsync(TASKS_FILE_URI);
-    if (!info.exists) {
+    if (!tasksFile.exists) {
       return [];
     }
-    const csvContent = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
+    const csvContent = await tasksFile.text();
     return deserializeCsvToTasks(csvContent);
   } catch (error) {
     console.error('Error reading tasks CSV:', error);
@@ -269,7 +263,10 @@ export async function writeTasks(tasks: Task[]): Promise<void> {
   return enqueueWrite(async () => {
     try {
       const csvContent = serializeTasksToCsv(tasks);
-      await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
+      if (!tasksFile.exists) {
+        tasksFile.create();
+      }
+      tasksFile.write(csvContent);
     } catch (error) {
       console.error('Error writing tasks CSV:', error);
     }
@@ -278,11 +275,10 @@ export async function writeTasks(tasks: Task[]): Promise<void> {
 
 export async function readCompletions(): Promise<CompletionLog[]> {
   try {
-    const info = await FileSystem.getInfoAsync(COMPLETIONS_FILE_URI);
-    if (!info.exists) {
+    if (!completionsFile.exists) {
       return [];
     }
-    const csvContent = await FileSystem.readAsStringAsync(COMPLETIONS_FILE_URI);
+    const csvContent = await completionsFile.text();
     return deserializeCsvToCompletions(csvContent);
   } catch (error) {
     console.error('Error reading completions CSV:', error);
@@ -294,7 +290,10 @@ export async function writeCompletions(logs: CompletionLog[]): Promise<void> {
   return enqueueWrite(async () => {
     try {
       const csvContent = serializeCompletionsToCsv(logs);
-      await FileSystem.writeAsStringAsync(COMPLETIONS_FILE_URI, csvContent);
+      if (!completionsFile.exists) {
+        completionsFile.create();
+      }
+      completionsFile.write(csvContent);
     } catch (error) {
       console.error('Error writing completions CSV:', error);
     }
@@ -303,9 +302,8 @@ export async function writeCompletions(logs: CompletionLog[]): Promise<void> {
 
 export async function readLastActiveDate(): Promise<string | null> {
   try {
-    const info = await FileSystem.getInfoAsync(LAST_ACTIVE_FILE_URI);
-    if (!info.exists) return null;
-    return await FileSystem.readAsStringAsync(LAST_ACTIVE_FILE_URI);
+    if (!lastActiveFile.exists) return null;
+    return await lastActiveFile.text();
   } catch {
     return null;
   }
@@ -313,13 +311,14 @@ export async function readLastActiveDate(): Promise<string | null> {
 
 export async function writeLastActiveDate(dateStr: string): Promise<void> {
   try {
-    await FileSystem.writeAsStringAsync(LAST_ACTIVE_FILE_URI, dateStr);
+    if (!lastActiveFile.exists) {
+      lastActiveFile.create();
+    }
+    lastActiveFile.write(dateStr);
   } catch (error) {
     console.error('Error writing last active date:', error);
   }
 }
-
-const TRACE_LOG_FILE_URI = FileSystem.documentDirectory + 'mirror_trace.log';
 
 let verboseLoggingActive = false;
 
@@ -329,9 +328,8 @@ export function setVerboseLogging(active: boolean) {
 
 export async function readTraceLogs(): Promise<string> {
   try {
-    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
-    if (!info.exists) return '';
-    return await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
+    if (!traceLogFile.exists) return '';
+    return await traceLogFile.text();
   } catch {
     return '';
   }
@@ -339,7 +337,9 @@ export async function readTraceLogs(): Promise<string> {
 
 export async function clearTraceLogs(): Promise<void> {
   try {
-    await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, '');
+    if (traceLogFile.exists) {
+      traceLogFile.delete();
+    }
   } catch (err) {
     console.error('Failed to clear trace logs:', err);
   }
@@ -355,12 +355,12 @@ export async function writeTraceLog(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] ${message}\n`;
     
-    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
-    if (info.exists) {
-      const existing = await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
-      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, existing + line);
+    if (traceLogFile.exists) {
+      const existing = await traceLogFile.text();
+      traceLogFile.write(existing + line);
     } else {
-      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, line);
+      traceLogFile.create();
+      traceLogFile.write(line);
     }
   } catch (err) {
     console.error('Failed to write trace log:', err);
@@ -373,20 +373,22 @@ export async function writeTraceLog(message: string): Promise<void> {
  */
 export async function enforceLogSizeLimit(): Promise<void> {
   try {
-    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
-    if (info.exists && info.size > 2 * 1024 * 1024) { // 2MB
-      const logContent = await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
-      const halfIndex = Math.floor(logContent.length / 2);
-      let cutIndex = logContent.indexOf('\n', halfIndex);
-      if (cutIndex === -1) {
-        cutIndex = halfIndex;
-      } else {
-        cutIndex += 1;
+    if (traceLogFile.exists) {
+      const fileInfo = traceLogFile.info();
+      if (fileInfo.size && fileInfo.size > 2 * 1024 * 1024) { // 2MB
+        const logContent = await traceLogFile.text();
+        const halfIndex = Math.floor(logContent.length / 2);
+        let cutIndex = logContent.indexOf('\n', halfIndex);
+        if (cutIndex === -1) {
+          cutIndex = halfIndex;
+        } else {
+          cutIndex += 1;
+        }
+        const prunedContent = logContent.substring(cutIndex);
+        traceLogFile.write(prunedContent);
+        console.log('mirror_trace.log size exceeded 2MB, pruned older 50%');
+        await writeTraceLog('[SYSTEM] Log size exceeded 2MB. Pruned older 50% of trace lines.');
       }
-      const prunedContent = logContent.substring(cutIndex);
-      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, prunedContent);
-      console.log('mirror_trace.log size exceeded 2MB, pruned older 50%');
-      await writeTraceLog('[SYSTEM] Log size exceeded 2MB. Pruned older 50% of trace lines.');
     }
   } catch (err) {
     console.error('Failed to enforce log size limit:', err);
@@ -409,24 +411,30 @@ export async function writeReconciliation(
     
     try {
       // 1. Create backups
-      const localExists = await FileSystem.getInfoAsync(TASKS_FILE_URI);
-      if (localExists.exists) {
-        localBackup = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
+      if (tasksFile.exists) {
+        localBackup = await tasksFile.text();
       }
       
+      let externalFile: File | null = null;
       if (externalUri) {
-        const extExists = await FileSystem.getInfoAsync(externalUri);
-        if (extExists.exists) {
-          externalBackup = await FileSystem.readAsStringAsync(externalUri);
+        externalFile = new File(externalUri);
+        if (externalFile.exists) {
+          externalBackup = await externalFile.text();
         }
       }
       
       // 2. Perform writes
       const localCsv = serializeTasksToCsv(localTasks);
-      await FileSystem.writeAsStringAsync(TASKS_FILE_URI, localCsv);
+      if (!tasksFile.exists) {
+        tasksFile.create();
+      }
+      tasksFile.write(localCsv);
       
-      if (externalUri && externalContent !== null) {
-        await FileSystem.writeAsStringAsync(externalUri, externalContent);
+      if (externalFile && externalContent !== null) {
+        if (!externalFile.exists) {
+          externalFile.create();
+        }
+        externalFile.write(externalContent);
       }
       
       await writeTraceLog(`[SYNC] Atomic reconciliation successful. Synchronized local database.`);
@@ -436,11 +444,14 @@ export async function writeReconciliation(
       
       // 3. Rollback local
       if (localBackup !== null) {
-        await FileSystem.writeAsStringAsync(TASKS_FILE_URI, localBackup);
+        if (!tasksFile.exists) tasksFile.create();
+        tasksFile.write(localBackup);
       }
       // Rollback external
       if (externalUri && externalBackup !== null) {
-        await FileSystem.writeAsStringAsync(externalUri, externalBackup);
+        const externalFile = new File(externalUri);
+        if (!externalFile.exists) externalFile.create();
+        externalFile.write(externalBackup);
       }
       
       throw new Error(`Sync transaction aborted due to write failures. Database rolled back.`);
@@ -455,29 +466,28 @@ export async function writeReconciliation(
  */
 export async function rotateAndCreateBackup(): Promise<void> {
   try {
-    const tasksExists = await FileSystem.getInfoAsync(TASKS_FILE_URI);
-    if (!tasksExists.exists) return;
-    
-    const tasksContent = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
+    if (!tasksFile.exists) return;
+    const tasksContent = await tasksFile.text();
     
     // Rotate backup files
     for (let i = 4; i >= 1; i--) {
-      const sourceUri = `${FileSystem.documentDirectory}backup_${i}.csv`;
-      const destUri = `${FileSystem.documentDirectory}backup_${i+1}.csv`;
-      const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
+      const sourceFile = new File(Paths.document, `backup_${i}.csv`);
+      const destFile = new File(Paths.document, `backup_${i+1}.csv`);
       
-      if (sourceInfo.exists) {
-        const destInfo = await FileSystem.getInfoAsync(destUri);
-        if (destInfo.exists) {
-          await FileSystem.deleteAsync(destUri);
+      if (sourceFile.exists) {
+        if (destFile.exists) {
+          destFile.delete();
         }
-        await FileSystem.moveAsync({ from: sourceUri, to: destUri });
+        sourceFile.move(destFile);
       }
     }
     
     // Write current state to backup_1.csv
-    const backup1Uri = `${FileSystem.documentDirectory}backup_1.csv`;
-    await FileSystem.writeAsStringAsync(backup1Uri, tasksContent);
+    const backup1File = new File(Paths.document, 'backup_1.csv');
+    if (!backup1File.exists) {
+      backup1File.create();
+    }
+    backup1File.write(tasksContent);
     await writeTraceLog('[BACKUP] Created rolling database backup snapshot (backup_1.csv).');
   } catch (err) {
     console.error('Failed to rotate and create backup:', err);
@@ -492,20 +502,19 @@ export async function listBackups(): Promise<{ filename: string; timestamp: stri
   try {
     for (let i = 1; i <= 5; i++) {
       const filename = `backup_${i}.csv`;
-      const uri = `${FileSystem.documentDirectory}${filename}`;
-      const info = await FileSystem.getInfoAsync(uri);
+      const backupFile = new File(Paths.document, filename);
       
-      if (info.exists) {
-        // Fallback modification time
+      if (backupFile.exists) {
+        const fileInfo = backupFile.info();
         let mtime = new Date().toLocaleString();
-        if (info.modificationTime) {
-          const mtimeMs = info.modificationTime * (info.modificationTime < 1000000000000 ? 1000 : 1);
+        if (fileInfo.modificationTime) {
+          const mtimeMs = fileInfo.modificationTime * (fileInfo.modificationTime < 1000000000000 ? 1000 : 1);
           mtime = new Date(mtimeMs).toLocaleString();
         }
         backups.push({
           filename,
           timestamp: mtime,
-          size: info.size,
+          size: fileInfo.size || 0,
         });
       }
     }
@@ -519,13 +528,15 @@ export async function listBackups(): Promise<{ filename: string; timestamp: stri
  * Overwrites the active tasks database with the selected backup snapshot.
  */
 export async function restoreFromBackup(backupName: string): Promise<void> {
-  const sourceUri = `${FileSystem.documentDirectory}${backupName}`;
-  const info = await FileSystem.getInfoAsync(sourceUri);
-  if (!info.exists) {
+  const backupFile = new File(Paths.document, backupName);
+  if (!backupFile.exists) {
     throw new Error(`Backup file "${backupName}" does not exist.`);
   }
   
-  const content = await FileSystem.readAsStringAsync(sourceUri);
-  await FileSystem.writeAsStringAsync(TASKS_FILE_URI, content);
+  const content = await backupFile.text();
+  if (!tasksFile.exists) {
+    tasksFile.create();
+  }
+  tasksFile.write(content);
   await writeTraceLog(`[BACKUP] Successfully restored tasks database from snapshot: ${backupName}`);
 }
