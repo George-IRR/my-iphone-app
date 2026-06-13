@@ -37,10 +37,14 @@ jobs:
 
       - name: Compile Unsigned Binary using xcodebuild
         run: |
-          # Dynamically extract the generated workspace name
-          WORKSPACE=$(ls ios/*.xcworkspace | head -n 1)
-          # Dynamically extract the primary application scheme name
+          # Force directory listing instead of content expansion
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
+          
+          # Extract scheme name, fallback to project name if list evaluation is empty
           SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list | sed -n '/Schemes:/,$p' | tail -n +2 | head -n 1 | xargs)
+          if [ -z "$SCHEME" ]; then
+            SCHEME=$(basename ios/*.xcodeproj .xcodeproj)
+          fi
           
           echo "Building Workspace: $WORKSPACE with Scheme: $SCHEME"
           
