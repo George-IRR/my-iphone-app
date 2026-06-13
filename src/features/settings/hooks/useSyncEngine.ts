@@ -13,6 +13,7 @@ import {
   writeTraceLog,
   readTraceLogs,
   clearTraceLogs,
+  PERMANENT_MIRROR_KEY,
 } from '../../../services/csvStorage';
 
 const STORAGE_KEYS = {
@@ -31,6 +32,7 @@ export function useSyncEngine(onSyncComplete?: () => void) {
   const [externalUri, setExternalUri] = useState<string | null>(null);
   const [externalTasks, setExternalTasks] = useState<Task[]>([]);
   const [diffs, setDiffs] = useState<DataDiff[]>([]);
+  const [permanentMirrorUri, setPermanentMirrorUri] = useState<string | null>(null);
 
   // Load configuration at startup
   useEffect(() => {
@@ -38,9 +40,11 @@ export function useSyncEngine(onSyncComplete?: () => void) {
       try {
         const lastSync = await AsyncStorage.getItem(STORAGE_KEYS.LAST_SYNC);
         const verboseStr = await AsyncStorage.getItem(STORAGE_KEYS.VERBOSE_LOGS);
+        const permMirror = await AsyncStorage.getItem(PERMANENT_MIRROR_KEY);
         const verbose = verboseStr === 'true';
         
         setVerboseLogging(verbose);
+        setPermanentMirrorUri(permMirror);
         setState(prev => ({
           ...prev,
           lastSyncDate: lastSync,
@@ -74,7 +78,7 @@ export function useSyncEngine(onSyncComplete?: () => void) {
       // 1. Pick file
       const docResult = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'text/comma-separated-values'],
-        copyToCacheDirectory: true,
+        copyToCacheDirectory: false,
       });
 
       if (docResult.canceled || !docResult.assets || docResult.assets.length === 0) {
@@ -222,14 +226,76 @@ export function useSyncEngine(onSyncComplete?: () => void) {
     }
   };
 
+  /**
+   * Prompts user with picker to create/select an external CSV file,
+   * then establishes it as a permanent 1:1 auto-updating mirror.
+   */
+  const linkPermanentMirror = async () => {
+    try {
+      setState(prev => ({ ...prev, loading: true, error: null }));
+      
+      const selectedDir = await FileSystem.Directory.pickDirectoryAsync();
+      
+      if (!selectedDir) {
+        setState(prev => ({ ...prev, loading: false }));
+        return;
+      }
+
+      const directory = new FileSystem.Directory(selectedDir.uri);
+      const mirrorFile = new FileSystem.File(directory, 'tasks_mirror.csv');
+      const uri = mirrorFile.uri;
+
+      await AsyncStorage.setItem(PERMANENT_MIRROR_KEY, uri);
+      setPermanentMirrorUri(uri);
+      await writeTraceLog(`[CONFIG] Permanent export mirror file linked in folder: ${directory.name} (File URI: ${uri})`);
+
+      // Write current database immediately to establish sync parity
+      const localTasks = await readTasks();
+      const localCsv = serializeTasksToCsv(localTasks);
+      
+      if (!mirrorFile.exists) {
+        mirrorFile.create();
+      }
+      mirrorFile.write(localCsv);
+      await writeTraceLog(`[SYNC] Initial parity write to permanent export mirror successful.`);
+
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.toLowerCase().includes('cancel') || errMsg.toLowerCase().includes('user rejected')) {
+        await writeTraceLog(`[CONFIG] Permanent mirror setup cancelled by user.`);
+      } else {
+        setState(prev => ({ ...prev, error: errMsg }));
+        await writeTraceLog(`[ERROR] Failed to link permanent export mirror: ${errMsg}`);
+      }
+    } finally {
+      setState(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  /**
+   * Unlinks the permanent mirror CSV file.
+   */
+  const unlinkPermanentMirror = async () => {
+    try {
+      await AsyncStorage.removeItem(PERMANENT_MIRROR_KEY);
+      setPermanentMirrorUri(null);
+      await writeTraceLog(`[CONFIG] Permanent export mirror file unlinked.`);
+    } catch (err) {
+      console.error('Failed to unlink permanent mirror:', err);
+    }
+  };
+
   return {
     state,
     externalUri,
     diffs,
+    permanentMirrorUri,
     toggleVerboseLogging,
     scanExternalFile,
     acceptMirrorModifications,
     rejectMirrorModifications,
+    linkPermanentMirror,
+    unlinkPermanentMirror,
     clearLogs: clearTraceLogs,
     readLogs: readTraceLogs,
   };

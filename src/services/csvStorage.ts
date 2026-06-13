@@ -1,6 +1,9 @@
-import { File, Paths } from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task, CompletionLog } from '../features/checklist/types';
+
+export const PERMANENT_MIRROR_KEY = '@sync_permanent_mirror_uri';
 
 const tasksFile = new File(Paths.document, 'tasks.csv');
 const completionsFile = new File(Paths.document, 'completions.csv');
@@ -267,6 +270,7 @@ export async function writeTasks(tasks: Task[]): Promise<void> {
         tasksFile.create();
       }
       tasksFile.write(csvContent);
+      await writeToPermanentMirror(csvContent);
     } catch (error) {
       console.error('Error writing tasks CSV:', error);
     }
@@ -437,6 +441,8 @@ export async function writeReconciliation(
         externalFile.write(externalContent);
       }
       
+      await writeToPermanentMirror(localCsv);
+      
       await writeTraceLog(`[SYNC] Atomic reconciliation successful. Synchronized local database.`);
     } catch (error) {
       console.error('Reconciliation transaction failed, rolling back:', error);
@@ -540,3 +546,61 @@ export async function restoreFromBackup(backupName: string): Promise<void> {
   tasksFile.write(content);
   await writeTraceLog(`[BACKUP] Successfully restored tasks database from snapshot: ${backupName}`);
 }
+
+/**
+ * Duplicates tasks.csv and completions.csv into safe_keeping_mirror/
+ * strictly upon application initialization.
+ */
+export async function mirrorDatabaseFiles(): Promise<void> {
+  try {
+    const mirrorDir = new Directory(Paths.document, 'safe_keeping_mirror');
+    if (!mirrorDir.exists) {
+      mirrorDir.create({ intermediates: true, idempotent: true });
+    }
+
+    const tasksMirrorFile = new File(mirrorDir, 'tasks_mirror.csv');
+    const completionsMirrorFile = new File(mirrorDir, 'completions_mirror.csv');
+
+    if (tasksFile.exists) {
+      if (tasksMirrorFile.exists) {
+        tasksMirrorFile.delete();
+      }
+      tasksFile.copy(tasksMirrorFile);
+    }
+    
+    if (completionsFile.exists) {
+      if (completionsMirrorFile.exists) {
+        completionsMirrorFile.delete();
+      }
+      completionsFile.copy(completionsMirrorFile);
+    }
+
+    await writeTraceLog('[SYSTEM] Database files mirrored to safe_keeping_mirror/ successfully.');
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await writeTraceLog(`[ERROR] Database mirroring failure: ${errMsg}`);
+    console.error('Database mirroring failure:', err);
+  }
+}
+
+/**
+ * Asynchronously duplicates task database content to the permanent mirror file, if configured.
+ * Safely catches security-scope or validation errors if permissions expire.
+ */
+export async function writeToPermanentMirror(csvContent: string): Promise<void> {
+  try {
+    const uri = await AsyncStorage.getItem(PERMANENT_MIRROR_KEY);
+    if (!uri) return;
+
+    const file = new File(uri);
+    // Write contents to the external file
+    file.write(csvContent);
+    await writeTraceLog(`[SYNC] Permanent export mirror file updated successfully at: ${uri}`);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await writeTraceLog(`[WARNING] Failed to write to permanent mirror: ${errMsg}. Permission scope may have expired. Please re-link in settings.`);
+    console.warn('Failed to write to permanent mirror:', err);
+  }
+}
+
+

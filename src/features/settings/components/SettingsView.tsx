@@ -35,10 +35,13 @@ export function SettingsView() {
     state,
     externalUri,
     diffs,
+    permanentMirrorUri,
     toggleVerboseLogging,
     scanExternalFile,
     acceptMirrorModifications,
     rejectMirrorModifications,
+    linkPermanentMirror,
+    unlinkPermanentMirror,
     clearLogs,
     readLogs,
   } = useSyncEngine(handleSyncComplete);
@@ -166,6 +169,57 @@ export function SettingsView() {
             </>
           )}
         </TouchableOpacity>
+      </View>
+
+      {/* Permanent Mirror Sync Card */}
+      <View style={styles.card}>
+        <View style={styles.syncStatusRow}>
+          <View style={styles.statusLabelRow}>
+            <IconSymbol name="gearshape" size={20} color="#F59E0B" />
+            <Text style={styles.cardTitle}>Permanent Export Mirror</Text>
+          </View>
+          <Text style={[styles.syncStatusLabel, !permanentMirrorUri && { color: '#9BA1A6', backgroundColor: '#2C2C2E' }]}>
+            {permanentMirrorUri ? 'Linked' : 'Not Linked'}
+          </Text>
+        </View>
+
+        <Text style={[styles.cardSubtitle, { marginBottom: 12, lineHeight: 16 }]}>
+          Auto-updates a selected external file in your iOS Files browser instantly whenever you make database mutations (add, toggle, or delete tasks).
+        </Text>
+
+        <View style={styles.syncDetails}>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailName}>Mirror Target File:</Text>
+            <Text style={styles.detailVal} numberOfLines={1} ellipsizeMode="middle">
+              {permanentMirrorUri ? permanentMirrorUri : 'None Linked'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity
+            style={[styles.scanButton, { backgroundColor: '#F59E0B', flex: 1 }]}
+            activeOpacity={0.8}
+            onPress={linkPermanentMirror}
+            disabled={state.loading}
+          >
+            <IconSymbol name="plus" size={16} color="#FFFFFF" />
+            <Text style={styles.scanButtonText}>
+              {permanentMirrorUri ? 'Re-link / Change File' : 'Link Permanent Export File'}
+            </Text>
+          </TouchableOpacity>
+
+          {permanentMirrorUri && (
+            <TouchableOpacity
+              style={[styles.scanButton, { backgroundColor: '#EF4444', paddingHorizontal: 16 }]}
+              activeOpacity={0.8}
+              onPress={unlinkPermanentMirror}
+              disabled={state.loading}
+            >
+              <Text style={styles.scanButtonText}>Unlink</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Backups Card */}

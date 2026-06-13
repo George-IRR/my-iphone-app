@@ -10,6 +10,7 @@ import {
   writeLastActiveDate,
   enforceLogSizeLimit,
   generateUuid,
+  mirrorDatabaseFiles,
 } from '../../../services/csvStorage';
 import {
   scheduleTaskNotifications,
@@ -76,6 +77,11 @@ export function useTaskEngine() {
       }
 
       setTasks(updatedTasks);
+      
+      // Perform 1:1 safe-keeping database mirroring asynchronously
+      mirrorDatabaseFiles().catch(err => {
+        console.error('Asynchronous database mirroring failed:', err);
+      });
     } catch (err) {
       console.error('Failed to load tasks checklist:', err);
       setError('Failed to retrieve checklist database.');
