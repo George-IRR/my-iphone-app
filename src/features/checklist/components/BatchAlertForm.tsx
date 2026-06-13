@@ -110,7 +110,7 @@ export function BatchAlertForm({ task, onClose, onSaveAlerts }: BatchAlertFormPr
   };
 
   const handleSave = () => {
-    onSaveAlerts(task.id, tempAlerts);
+    onSaveAlerts(task.id === 'batch_selection' ? 'batch_selection' : task.uuid, tempAlerts);
     onClose();
   };
 

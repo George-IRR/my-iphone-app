@@ -184,7 +184,7 @@ export function SettingsView() {
         </View>
 
         <Text style={[styles.cardSubtitle, { marginBottom: 12, lineHeight: 16 }]}>
-          Auto-updates a selected external file in your iOS Files browser instantly whenever you make database mutations (add, toggle, or delete tasks).
+          Auto-updates a selected external folder in your Files browser instantly whenever you make database mutations (add, toggle, or delete tasks).
         </Text>
 
         <View style={styles.syncDetails}>
@@ -205,7 +205,7 @@ export function SettingsView() {
           >
             <IconSymbol name="plus" size={16} color="#FFFFFF" />
             <Text style={styles.scanButtonText}>
-              {permanentMirrorUri ? 'Re-link / Change File' : 'Link Permanent Export File'}
+              {permanentMirrorUri ? 'Re-link / Change Folder' : 'Link Permanent Export File'}
             </Text>
           </TouchableOpacity>
 

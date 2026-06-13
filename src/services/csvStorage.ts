@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task, CompletionLog, TaskType } from '../features/checklist/types';
@@ -88,7 +89,7 @@ export function generateUuid(): string {
  * Serializes task items array into CSV string.
  */
 export function serializeTasksToCsv(tasks: Task[]): string {
-  const header = 'uuid,id,title,type,completed,completed_date,created_date,alerts';
+  const header = 'uuid,id,title,type,completed,completed_date,created_date,alerts,deleted';
   const lines = tasks.map(task => {
     const uuid = escapeCsvValue(task.uuid || generateUuid());
     const id = escapeCsvValue(task.id);
@@ -98,7 +99,8 @@ export function serializeTasksToCsv(tasks: Task[]): string {
     const completedDate = escapeCsvValue(task.completed_date);
     const createdDate = escapeCsvValue(task.created_date);
     const alerts = escapeCsvValue(JSON.stringify(task.alerts));
-    return `${uuid},${id},${title},${type},${completed},${completedDate},${createdDate},${alerts}`;
+    const deleted = escapeCsvValue(task.deleted ? 'true' : 'false');
+    return `${uuid},${id},${title},${type},${completed},${completedDate},${createdDate},${alerts},${deleted}`;
   });
   return [header, ...lines].join('\n');
 }
@@ -119,6 +121,7 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
   const completedDateIdx = header.indexOf('completed_date');
   const createdDateIdx = header.indexOf('created_date');
   const alertsIdx = header.indexOf('alerts');
+  const deletedIdx = header.indexOf('deleted');
   
   const tasks: Task[] = [];
   
@@ -134,6 +137,7 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
     let completedDateVal: string | null = null;
     let createdDateVal = new Date().toISOString();
     let alertsVal: string[] = [];
+    let deletedVal = false;
 
     const hasUuidHeader = uuidIdx !== -1;
     const firstElement = row[0] || '';
@@ -147,6 +151,7 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
       completedVal = completedIdx !== -1 && row[completedIdx] === 'true';
       completedDateVal = completedDateIdx !== -1 ? (row[completedDateIdx] || null) : null;
       createdDateVal = createdDateIdx !== -1 ? (row[createdDateIdx] || new Date().toISOString()) : new Date().toISOString();
+      deletedVal = deletedIdx !== -1 && row[deletedIdx] === 'true';
       
       const alertsStr = alertsIdx !== -1 ? row[alertsIdx] : '';
       if (alertsStr) {
@@ -165,6 +170,7 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
       completedVal = (completedIdx !== -1 ? row[completedIdx] : row[3]) === 'true';
       completedDateVal = completedDateIdx !== -1 ? (row[completedDateIdx] || null) : (row[4] || null);
       createdDateVal = createdDateIdx !== -1 ? (row[createdDateIdx] || new Date().toISOString()) : (row[5] || new Date().toISOString());
+      deletedVal = deletedIdx !== -1 && row[deletedIdx] === 'true';
       
       const alertsStr = alertsIdx !== -1 ? row[alertsIdx] : (row[6] || '');
       if (alertsStr) {
@@ -186,6 +192,7 @@ export function deserializeCsvToTasks(csvText: string): Task[] {
       completed_date: completedDateVal,
       created_date: createdDateVal,
       alerts: alertsVal,
+      deleted: deletedVal,
     });
   }
   
@@ -580,7 +587,11 @@ export async function writeToPermanentMirror(csvContent: string): Promise<void> 
     const uri = await AsyncStorage.getItem(PERMANENT_MIRROR_KEY);
     if (!uri) return;
 
-    await FileSystem.writeAsStringAsync(uri, csvContent);
+    const file = new File(uri);
+    if (!file.exists) {
+      file.create();
+    }
+    file.write(csvContent);
     await writeTraceLog(`[SYNC] Permanent export mirror file updated successfully at: ${uri}`);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -609,7 +620,8 @@ export async function batchToggleTasks(uuids: string[], completed: boolean): Pro
     });
 
     let logs = await readCompletions();
-    const todayStr = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     if (completed) {
       for (const uuid of uuids) {
         const task = currentTasks.find(t => t.uuid === uuid);
@@ -623,7 +635,8 @@ export async function batchToggleTasks(uuids: string[], completed: boolean): Pro
     } else {
       logs = logs.filter(log => {
         const isTarget = uuidSet.has(log.taskId);
-        const logDay = log.completedDate.split('T')[0];
+        const logDate = new Date(log.completedDate);
+        const logDay = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}-${String(logDate.getDate()).padStart(2, '0')}`;
         return !(isTarget && logDay === todayStr);
       });
     }
@@ -637,16 +650,21 @@ export async function batchToggleTasks(uuids: string[], completed: boolean): Pro
   });
 }
 
-/**
- * Deletes multiple tasks in-memory and commits a single file system write.
- */
 export async function batchDeleteTasks(uuids: string[]): Promise<void> {
   return enqueueWrite(async () => {
     const currentTasks = await readTasks();
     const uuidSet = new Set(uuids);
-    const filteredTasks = currentTasks.filter(task => !uuidSet.has(task.uuid));
+    const updatedTasks = currentTasks.map(task => {
+      if (uuidSet.has(task.uuid)) {
+        return {
+          ...task,
+          deleted: true,
+        };
+      }
+      return task;
+    });
 
-    const csvContent = serializeTasksToCsv(filteredTasks);
+    const csvContent = serializeTasksToCsv(updatedTasks);
     await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
     await writeToPermanentMirror(csvContent);
   });

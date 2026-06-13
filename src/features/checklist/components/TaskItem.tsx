@@ -34,12 +34,12 @@ export const TaskItem = React.memo(function TaskItem({
   const swipeableRef = React.useRef<SwipeableMethods>(null);
 
   const handleToggle = React.useCallback(() => {
-    onToggle(task.id);
-  }, [task.id, onToggle]);
+    onToggle(task.uuid);
+  }, [task.uuid, onToggle]);
 
   const handleDelete = React.useCallback(() => {
-    onDelete(task.id);
-  }, [task.id, onDelete]);
+    onDelete(task.uuid);
+  }, [task.uuid, onDelete]);
 
   const handleConfigureAlerts = React.useCallback(() => {
     onConfigureAlerts(task);

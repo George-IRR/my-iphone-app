@@ -9,6 +9,7 @@ export interface Task {
   completed_date: string | null;
   created_date: string;
   alerts: string[]; // Array of alert strings (e.g. "time:08:30", "datetime:...", "offset:...")
+  deleted?: boolean;
 }
 
 export interface CompletionLog {

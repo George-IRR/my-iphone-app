@@ -45,18 +45,42 @@ export function useTaskEngine() {
 
       if (lastActive) {
         if (lastActive !== todayStr) {
-          // A calendar day boundary has crossed! Reset daily tasks.
-          updatedTasks = activeTasks.map(task => {
-            if (task.type === 'daily') {
-              return {
-                ...task,
+          // A calendar day boundary has crossed! Group daily tasks by ID and check the latest instance.
+          const tasksById = new Map<string, Task[]>();
+          for (const task of activeTasks) {
+            if (!tasksById.has(task.id)) {
+              tasksById.set(task.id, []);
+            }
+            tasksById.get(task.id)!.push(task);
+          }
+
+          const newCopies: Task[] = [];
+          for (const instances of tasksById.values()) {
+            const sorted = [...instances].sort((a, b) => {
+              const timeA = a.created_date ? new Date(a.created_date).getTime() : 0;
+              const timeB = b.created_date ? new Date(b.created_date).getTime() : 0;
+              return timeB - timeA;
+            });
+            const latest = sorted[0];
+
+            if (latest && latest.type === 'daily' && latest.completed && !latest.deleted) {
+              newCopies.push({
+                uuid: generateUuid(),
+                id: latest.id,
+                title: latest.title,
+                type: 'daily',
                 completed: false,
                 completed_date: null,
-              };
+                created_date: new Date().toISOString(),
+                alerts: latest.alerts,
+              });
             }
-            return task;
-          });
-          didReset = true;
+          }
+
+          if (newCopies.length > 0) {
+            updatedTasks = [...activeTasks, ...newCopies];
+            didReset = true;
+          }
         }
       }
 
@@ -140,11 +164,11 @@ export function useTaskEngine() {
     }
   };
 
-  const toggleTask = async (id: string) => {
+  const toggleTask = async (uuid: string) => {
     try {
       setError(null);
       const updatedTasks = tasks.map(task => {
-        if (task.id === id) {
+        if (task.uuid === uuid) {
           const nextCompleted = !task.completed;
           const completedDate = nextCompleted ? new Date().toISOString() : null;
           return {
@@ -156,22 +180,24 @@ export function useTaskEngine() {
         return task;
       });
 
-      const toggledTask = updatedTasks.find(t => t.id === id);
+      const toggledTask = updatedTasks.find(t => t.uuid === uuid);
       if (!toggledTask) return;
 
       // Update completions history logs
       let logs = await readCompletions();
       if (toggledTask.completed) {
         logs.push({
-          taskId: id,
+          taskId: toggledTask.uuid,
           completedDate: toggledTask.completed_date || new Date().toISOString(),
         });
       } else {
-        // Remove completion entry for today
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Remove completion entry for today (local date comparison)
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         logs = logs.filter(log => {
-          const isThisTask = log.taskId === id;
-          const logDay = log.completedDate.split('T')[0];
+          const isThisTask = log.taskId === toggledTask.uuid;
+          const logDate = new Date(log.completedDate);
+          const logDay = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}-${String(logDate.getDate()).padStart(2, '0')}`;
           return !(isThisTask && logDay === todayStr);
         });
       }
@@ -185,13 +211,21 @@ export function useTaskEngine() {
     }
   };
 
-  const deleteTask = async (id: string) => {
+  const deleteTask = async (uuid: string) => {
     try {
       setError(null);
-      const updatedTasks = tasks.filter(task => task.id !== id);
+      const targetTask = tasks.find(t => t.uuid === uuid);
+      if (!targetTask) return;
 
-      // Cancel associated system alerts
-      await cancelTaskNotifications(id);
+      const updatedTasks = tasks.map(task => {
+        if (task.uuid === uuid) {
+          return { ...task, deleted: true };
+        }
+        return task;
+      });
+
+      // Cancel associated system alerts (using local task.id)
+      await cancelTaskNotifications(targetTask.id);
 
       await writeTasks(updatedTasks);
       setTasks(updatedTasks);
@@ -201,10 +235,10 @@ export function useTaskEngine() {
     }
   };
 
-  const updateTaskAlerts = async (id: string, alerts: string[]) => {
+  const updateTaskAlerts = async (uuid: string, alerts: string[]) => {
     try {
       setError(null);
-      const taskIndex = tasks.findIndex(t => t.id === id);
+      const taskIndex = tasks.findIndex(t => t.uuid === uuid);
       if (taskIndex === -1) return;
 
       const targetTask = tasks[taskIndex];
@@ -212,8 +246,8 @@ export function useTaskEngine() {
       const updatedTasks = [...tasks];
       updatedTasks[taskIndex] = updatedTask;
 
-      // Reschedule alerts in notification engine
-      await scheduleTaskNotifications(id, targetTask.title, alerts);
+      // Reschedule alerts in notification engine (using local task.id)
+      await scheduleTaskNotifications(targetTask.id, targetTask.title, alerts);
 
       await writeTasks(updatedTasks);
       setTasks(updatedTasks);
@@ -252,7 +286,12 @@ export function useTaskEngine() {
         }
       }
       const uuidSet = new Set(uuids);
-      setTasks(prev => prev.filter(task => !uuidSet.has(task.uuid)));
+      setTasks(prev => prev.map(task => {
+        if (uuidSet.has(task.uuid)) {
+          return { ...task, deleted: true };
+        }
+        return task;
+      }));
     } catch (err) {
       console.error('Failed to batch delete tasks:', err);
       setError('Failed to batch delete tasks.');
@@ -299,8 +338,20 @@ export function useTaskEngine() {
     }
   };
 
+  const activeTasksList = tasks.filter(task => {
+    if (task.deleted) return false;
+    if (task.completed && task.completed_date) {
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const compDate = new Date(task.completed_date);
+      const compDateStr = `${compDate.getFullYear()}-${String(compDate.getMonth() + 1).padStart(2, '0')}-${String(compDate.getDate()).padStart(2, '0')}`;
+      return compDateStr === todayStr;
+    }
+    return true;
+  });
+
   return {
-    tasks,
+    tasks: activeTasksList,
     loading,
     error,
     refetch: loadTasksData,

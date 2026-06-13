@@ -76,9 +76,26 @@ export default function ChecklistScreen() {
   }, [tasks, filter, searchQuery]);
 
   // Callbacks for Task mutations, wrapped with useCallback to avoid re-renders
-  const handleToggle = useCallback(async (id: string) => {
-    await toggleTask(id);
-  }, [toggleTask]);
+  const handleToggle = useCallback(async (uuid: string) => {
+    const task = tasks.find(t => t.uuid === uuid);
+    if (task && task.completed) {
+      Alert.alert(
+        'Uncomplete Task',
+        'Are you sure you want to uncomplete this task?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes',
+            onPress: async () => {
+              await toggleTask(uuid);
+            },
+          },
+        ]
+      );
+    } else {
+      await toggleTask(uuid);
+    }
+  }, [tasks, toggleTask]);
 
   const handleDelete = useCallback(async (id: string) => {
     await deleteTask(id);
@@ -143,10 +160,30 @@ export default function ChecklistScreen() {
     const allCompleted = selectedTasks.every(t => t.completed);
     const nextCompleted = !allCompleted;
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await batchToggleTasks(Array.from(selectedTaskIds), nextCompleted);
-    setSelectedTaskIds(new Set());
-    setIsMultiSelectMode(false);
+    if (!nextCompleted) {
+      const completedCount = selectedTasks.filter(t => t.completed).length;
+      Alert.alert(
+        'Uncomplete Tasks',
+        `Are you sure you want to uncomplete the ${completedCount} completed tasks?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Yes',
+            onPress: async () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              await batchToggleTasks(Array.from(selectedTaskIds), false);
+              setSelectedTaskIds(new Set());
+              setIsMultiSelectMode(false);
+            },
+          },
+        ]
+      );
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await batchToggleTasks(Array.from(selectedTaskIds), true);
+      setSelectedTaskIds(new Set());
+      setIsMultiSelectMode(false);
+    }
   }, [selectedTaskIds, tasks, batchToggleTasks]);
 
   const handleBatchReschedule = useCallback(async () => {

@@ -33,8 +33,12 @@ export function useHeatmapData() {
     const counts: Record<string, number> = {};
     for (const log of completions) {
       if (!log.completedDate) continue;
-      // Extract YYYY-MM-DD from ISO format string
-      const dateKey = log.completedDate.split('T')[0];
+      const dateObj = new Date(log.completedDate);
+      if (isNaN(dateObj.getTime())) continue;
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const dateKey = `${year}-${month}-${day}`;
       counts[dateKey] = (counts[dateKey] || 0) + 1;
     }
     return counts;
