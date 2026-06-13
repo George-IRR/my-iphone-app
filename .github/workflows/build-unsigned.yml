@@ -2,7 +2,7 @@ name: Build Unsigned iOS App
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
           zip -r unsigned-app.ipa Payload
           
       - name: Upload Unsigned IPA Production Artifact
-        uses: actions/artifacts@v4
+        uses: actions/upload-artifact@v4
         with:
           name: unsigned-ios-ipa
           path: unsigned-app.ipa
