@@ -1,5 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import ReanimatedSwipeable, {
+  SwipeableMethods,
+  SwipeDirection,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { SharedValue } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { Task } from '../types';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Fonts } from '@/constants/theme';
@@ -9,6 +15,10 @@ interface TaskItemProps {
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onConfigureAlerts: (task: Task) => void;
+  isSelected?: boolean;
+  isMultiSelectMode?: boolean;
+  onSelect?: (id: string) => void;
+  onLongPress?: (id: string) => void;
 }
 
 export const TaskItem = React.memo(function TaskItem({
@@ -16,7 +26,13 @@ export const TaskItem = React.memo(function TaskItem({
   onToggle,
   onDelete,
   onConfigureAlerts,
+  isSelected = false,
+  isMultiSelectMode = false,
+  onSelect,
+  onLongPress,
 }: TaskItemProps) {
+  const swipeableRef = React.useRef<SwipeableMethods>(null);
+
   const handleToggle = React.useCallback(() => {
     onToggle(task.id);
   }, [task.id, onToggle]);
@@ -28,6 +44,23 @@ export const TaskItem = React.memo(function TaskItem({
   const handleConfigureAlerts = React.useCallback(() => {
     onConfigureAlerts(task);
   }, [task, onConfigureAlerts]);
+
+  const handlePress = React.useCallback(() => {
+    if (isMultiSelectMode && onSelect) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      onSelect(task.id);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      handleToggle();
+    }
+  }, [isMultiSelectMode, onSelect, task.id, handleToggle]);
+
+  const handleLongPress = React.useCallback(() => {
+    if (onLongPress) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      onLongPress(task.id);
+    }
+  }, [onLongPress, task.id]);
 
   // Clean description of scheduled alerts
   const formatAlertText = (alertStr: string) => {
@@ -44,20 +77,67 @@ export const TaskItem = React.memo(function TaskItem({
     return alertStr;
   };
 
-  return (
-    <View style={[styles.container, task.completed && styles.containerCompleted]}>
-      {/* Complete Checkbox button */}
-      <TouchableOpacity
-        onPress={handleToggle}
-        activeOpacity={0.7}
-        style={styles.checkboxContainer}
-      >
-        <IconSymbol
-          name={task.completed ? 'checkmark.circle.fill' : 'circle'}
-          size={26}
-          color={task.completed ? '#10B981' : '#9BA1A6'}
-        />
-      </TouchableOpacity>
+  const handleSwipeOpen = (direction: SwipeDirection.LEFT | SwipeDirection.RIGHT) => {
+    if (direction === SwipeDirection.LEFT) {
+      // Swiped left-to-right (revealing left actions, e.g. checkmark) -> toggle complete
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      handleToggle();
+      swipeableRef.current?.close();
+    } else if (direction === SwipeDirection.RIGHT) {
+      // Swiped right-to-left (revealing right actions, e.g. trash) -> delete
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      handleDelete();
+      swipeableRef.current?.close();
+    }
+  };
+
+  const renderLeftActions = (
+    _progress: SharedValue<number>,
+    _translation: SharedValue<number>,
+    _swipeable: SwipeableMethods
+  ) => {
+    return (
+      <View style={[styles.swipeActionContainer, styles.swipeLeftAction]}>
+        <IconSymbol name="checkmark.circle.fill" size={22} color="#FFFFFF" />
+        <Text style={styles.swipeActionText}>Complete</Text>
+      </View>
+    );
+  };
+
+  const renderRightActions = (
+    _progress: SharedValue<number>,
+    _translation: SharedValue<number>,
+    _swipeable: SwipeableMethods
+  ) => {
+    return (
+      <View style={[styles.swipeActionContainer, styles.swipeRightAction]}>
+        <Text style={styles.swipeActionText}>Delete</Text>
+        <IconSymbol name="trash.fill" size={22} color="#FFFFFF" />
+      </View>
+    );
+  };
+
+  const content = (
+    <TouchableOpacity
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      activeOpacity={0.85}
+      style={[
+        styles.container,
+        task.completed && styles.containerCompleted,
+        isSelected && styles.containerSelected,
+      ]}
+    >
+      {/* Selection indicator when in multi-select mode */}
+      {isMultiSelectMode && (
+        <View style={styles.selectionIndicator}>
+          <IconSymbol
+            name={isSelected ? 'checkmark.circle.fill' : 'circle'}
+            size={22}
+            color={isSelected ? '#10B981' : '#9BA1A6'}
+          />
+        </View>
+      )}
 
       {/* Task Details Info */}
       <View style={styles.detailsContainer}>
@@ -77,6 +157,21 @@ export const TaskItem = React.memo(function TaskItem({
               {task.type === 'daily' ? '↻ Daily' : '⚡ One-Time'}
             </Text>
           </View>
+
+          {/* Alarm Config Button */}
+          {!isMultiSelectMode && (
+            <TouchableOpacity
+              onPress={handleConfigureAlerts}
+              activeOpacity={0.6}
+              style={styles.bellButton}
+            >
+              <IconSymbol
+                name="bell.fill"
+                size={12}
+                color={task.alerts.length > 0 ? '#F59E0B' : '#9BA1A6'}
+              />
+            </TouchableOpacity>
+          )}
 
           {/* Completion Date Label */}
           {task.completed && task.completed_date && (
@@ -101,32 +196,21 @@ export const TaskItem = React.memo(function TaskItem({
           </View>
         )}
       </View>
+    </TouchableOpacity>
+  );
 
-      {/* Options Panel */}
-      <View style={styles.actionsContainer}>
-        {/* Set alarms button */}
-        <TouchableOpacity
-          onPress={handleConfigureAlerts}
-          activeOpacity={0.6}
-          style={styles.actionButton}
-        >
-          <IconSymbol
-            name="bell.fill"
-            size={18}
-            color={task.alerts.length > 0 ? '#F59E0B' : '#9BA1A6'}
-          />
-        </TouchableOpacity>
-
-        {/* Delete button */}
-        <TouchableOpacity
-          onPress={handleDelete}
-          activeOpacity={0.6}
-          style={styles.actionButton}
-        >
-          <IconSymbol name="trash.fill" size={18} color="#EF4444" />
-        </TouchableOpacity>
-      </View>
-    </View>
+  return (
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      enabled={!isMultiSelectMode}
+      renderLeftActions={renderLeftActions}
+      renderRightActions={renderRightActions}
+      onSwipeableWillOpen={handleSwipeOpen}
+      leftThreshold={60}
+      rightThreshold={60}
+    >
+      {content}
+    </ReanimatedSwipeable>
   );
 });
 
@@ -142,10 +226,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   containerCompleted: {
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderColor: 'rgba(16, 185, 129, 0.2)',
     backgroundColor: '#161C19',
   },
-  checkboxContainer: {
+  containerSelected: {
+    borderColor: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+  },
+  selectionIndicator: {
     marginRight: 14,
     justifyContent: 'center',
     alignItems: 'center',
@@ -177,13 +265,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   badgeDaily: {
-    backgroundColor: 'rgba(79, 70, 229, 0.2)',
-    borderColor: 'rgba(79, 70, 229, 0.4)',
+    backgroundColor: 'rgba(79, 70, 229, 0.15)',
+    borderColor: 'rgba(79, 70, 229, 0.3)',
     borderWidth: 1,
   },
   badgeOneTime: {
-    backgroundColor: 'rgba(104, 112, 118, 0.2)',
-    borderColor: 'rgba(104, 112, 118, 0.4)',
+    backgroundColor: 'rgba(104, 112, 118, 0.15)',
+    borderColor: 'rgba(104, 112, 118, 0.3)',
     borderWidth: 1,
   },
   badgeText: {
@@ -191,6 +279,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#ECEDEE',
     fontFamily: Fonts.mono,
+  },
+  bellButton: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#2C2C2E',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   completedDateText: {
     fontSize: 11,
@@ -228,15 +323,28 @@ const styles = StyleSheet.create({
     color: '#ECEDEE',
     fontFamily: Fonts.mono,
   },
-  actionsContainer: {
+  swipeActionContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 8,
-    gap: 6,
+    borderRadius: 14,
+    marginBottom: 12,
+    paddingHorizontal: 20,
   },
-  actionButton: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#2C2C2E',
+  swipeLeftAction: {
+    backgroundColor: '#10B981',
+    justifyContent: 'flex-start',
+    gap: 8,
+  },
+  swipeRightAction: {
+    backgroundColor: '#EF4444',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  swipeActionText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 13,
+    fontFamily: Fonts.sans,
   },
 });

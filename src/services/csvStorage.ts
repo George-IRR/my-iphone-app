@@ -1,7 +1,7 @@
 import { File, Directory, Paths } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Task, CompletionLog } from '../features/checklist/types';
+import { Task, CompletionLog, TaskType } from '../features/checklist/types';
 
 export const PERMANENT_MIRROR_KEY = '@sync_permanent_mirror_uri';
 
@@ -602,5 +602,125 @@ export async function writeToPermanentMirror(csvContent: string): Promise<void> 
     console.warn('Failed to write to permanent mirror:', err);
   }
 }
+
+/**
+ * Toggles completion status for multiple tasks in-memory and performs a single file system write.
+ */
+export async function batchToggleTasks(ids: string[], completed: boolean): Promise<void> {
+  return enqueueWrite(async () => {
+    const currentTasks = await readTasks();
+    const idSet = new Set(ids);
+    const completedDate = completed ? new Date().toISOString() : null;
+    const updatedTasks = currentTasks.map(task => {
+      if (idSet.has(task.id)) {
+        return {
+          ...task,
+          completed,
+          completed_date: completedDate,
+        };
+      }
+      return task;
+    });
+
+    let logs = await readCompletions();
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (completed) {
+      for (const id of ids) {
+        const task = currentTasks.find(t => t.id === id);
+        if (task && !task.completed) {
+          logs.push({
+            taskId: id,
+            completedDate: completedDate || new Date().toISOString(),
+          });
+        }
+      }
+    } else {
+      logs = logs.filter(log => {
+        const isTarget = idSet.has(log.taskId);
+        const logDay = log.completedDate.split('T')[0];
+        return !(isTarget && logDay === todayStr);
+      });
+    }
+
+    const tasksCsv = serializeTasksToCsv(updatedTasks);
+    const completionsCsv = serializeCompletionsToCsv(logs);
+
+    if (!tasksFile.exists) tasksFile.create();
+    tasksFile.write(tasksCsv);
+
+    if (!completionsFile.exists) completionsFile.create();
+    completionsFile.write(completionsCsv);
+
+    await writeToPermanentMirror(tasksCsv);
+  });
+}
+
+/**
+ * Deletes multiple tasks in-memory and commits a single file system write.
+ */
+export async function batchDeleteTasks(ids: string[]): Promise<void> {
+  return enqueueWrite(async () => {
+    const currentTasks = await readTasks();
+    const idSet = new Set(ids);
+    const filteredTasks = currentTasks.filter(task => !idSet.has(task.id));
+
+    const csvContent = serializeTasksToCsv(filteredTasks);
+    if (!tasksFile.exists) tasksFile.create();
+    tasksFile.write(csvContent);
+
+    await writeToPermanentMirror(csvContent);
+  });
+}
+
+/**
+ * Changes type (daily vs onetime) for multiple tasks in-memory and commits a single file system write.
+ */
+export async function batchRescheduleTasks(ids: string[], type: TaskType): Promise<void> {
+  return enqueueWrite(async () => {
+    const currentTasks = await readTasks();
+    const idSet = new Set(ids);
+    const updatedTasks = currentTasks.map(task => {
+      if (idSet.has(task.id)) {
+        return {
+          ...task,
+          type,
+        };
+      }
+      return task;
+    });
+
+    const csvContent = serializeTasksToCsv(updatedTasks);
+    if (!tasksFile.exists) tasksFile.create();
+    tasksFile.write(csvContent);
+
+    await writeToPermanentMirror(csvContent);
+  });
+}
+
+/**
+ * Updates alerts/alarms for multiple tasks in-memory and commits a single file system write.
+ */
+export async function batchUpdateAlerts(ids: string[], alerts: string[]): Promise<void> {
+  return enqueueWrite(async () => {
+    const currentTasks = await readTasks();
+    const idSet = new Set(ids);
+    const updatedTasks = currentTasks.map(task => {
+      if (idSet.has(task.id)) {
+        return {
+          ...task,
+          alerts,
+        };
+      }
+      return task;
+    });
+
+    const csvContent = serializeTasksToCsv(updatedTasks);
+    if (!tasksFile.exists) tasksFile.create();
+    tasksFile.write(csvContent);
+
+    await writeToPermanentMirror(csvContent);
+  });
+}
+
 
 

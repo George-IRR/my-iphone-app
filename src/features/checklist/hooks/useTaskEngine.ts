@@ -11,6 +11,10 @@ import {
   enforceLogSizeLimit,
   generateUuid,
   mirrorDatabaseFiles,
+  batchToggleTasks,
+  batchDeleteTasks,
+  batchRescheduleTasks,
+  batchUpdateAlerts,
 } from '../../../services/csvStorage';
 import {
   scheduleTaskNotifications,
@@ -219,6 +223,79 @@ export function useTaskEngine() {
     }
   };
 
+  const batchToggle = async (ids: string[], completed: boolean) => {
+    try {
+      setError(null);
+      await batchToggleTasks(ids, completed);
+      const completedDate = completed ? new Date().toISOString() : null;
+      const idSet = new Set(ids);
+      setTasks(prev => prev.map(task => {
+        if (idSet.has(task.id)) {
+          return { ...task, completed, completed_date: completedDate };
+        }
+        return task;
+      }));
+    } catch (err) {
+      console.error('Failed to batch toggle tasks:', err);
+      setError('Failed to batch toggle status.');
+    }
+  };
+
+  const batchDelete = async (ids: string[]) => {
+    try {
+      setError(null);
+      await batchDeleteTasks(ids);
+      for (const id of ids) {
+        await cancelTaskNotifications(id);
+      }
+      const idSet = new Set(ids);
+      setTasks(prev => prev.filter(task => !idSet.has(task.id)));
+    } catch (err) {
+      console.error('Failed to batch delete tasks:', err);
+      setError('Failed to batch delete tasks.');
+    }
+  };
+
+  const batchReschedule = async (ids: string[], type: TaskType) => {
+    try {
+      setError(null);
+      await batchRescheduleTasks(ids, type);
+      const idSet = new Set(ids);
+      setTasks(prev => prev.map(task => {
+        if (idSet.has(task.id)) {
+          return { ...task, type };
+        }
+        return task;
+      }));
+    } catch (err) {
+      console.error('Failed to batch reschedule tasks:', err);
+      setError('Failed to batch reschedule tasks.');
+    }
+  };
+
+  const batchAlerts = async (ids: string[], alerts: string[]) => {
+    try {
+      setError(null);
+      await batchUpdateAlerts(ids, alerts);
+      for (const id of ids) {
+        const task = tasks.find(t => t.id === id);
+        if (task) {
+          await scheduleTaskNotifications(id, task.title, alerts);
+        }
+      }
+      const idSet = new Set(ids);
+      setTasks(prev => prev.map(task => {
+        if (idSet.has(task.id)) {
+          return { ...task, alerts };
+        }
+        return task;
+      }));
+    } catch (err) {
+      console.error('Failed to batch update alerts:', err);
+      setError('Failed to batch update alerts.');
+    }
+  };
+
   return {
     tasks,
     loading,
@@ -228,5 +305,9 @@ export function useTaskEngine() {
     toggleTask,
     deleteTask,
     updateTaskAlerts,
+    batchToggleTasks: batchToggle,
+    batchDeleteTasks: batchDelete,
+    batchRescheduleTasks: batchReschedule,
+    batchUpdateAlerts: batchAlerts,
   };
 }

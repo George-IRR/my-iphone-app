@@ -28,6 +28,7 @@ const MAPPING = {
   'calendar': 'event',
   'clock.fill': 'access-time',
   'gearshape': 'settings',
+  'magnifyingglass': 'search',
 } as IconMapping;
 
 /**

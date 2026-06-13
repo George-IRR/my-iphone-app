@@ -5,9 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
+import * as Haptics from 'expo-haptics';
 import { Fonts } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 
@@ -33,20 +36,44 @@ export default function ChecklistScreen() {
     toggleTask,
     deleteTask,
     updateTaskAlerts,
+    batchToggleTasks,
+    batchDeleteTasks,
+    batchRescheduleTasks,
+    batchUpdateAlerts,
   } = useTaskEngine();
 
   const [filter, setFilter] = useState<FilterType>('all');
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  // Memoize task filtering to optimize rendering performance
+  // Search and Multi-select states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const [isBatchAlertsVisible, setIsBatchAlertsVisible] = useState(false);
+
+  // Memoize task filtering to optimize rendering performance, with safe Regex filter
   const filteredTasks = useMemo(() => {
-    return tasks.filter(task => {
+    let result = tasks.filter(task => {
       if (filter === 'daily') return task.type === 'daily';
       if (filter === 'onetime') return task.type === 'onetime';
       return true;
     });
-  }, [tasks, filter]);
+
+    if (searchQuery.trim() !== '') {
+      try {
+        // Attempt compilation of user search constraints
+        const regex = new RegExp(searchQuery, 'i');
+        result = result.filter(task => regex.test(task.title));
+      } catch {
+        // Graceful fallback to substring scanning if compilation throws
+        const normalizedQuery = searchQuery.toLowerCase();
+        result = result.filter(task => task.title.toLowerCase().includes(normalizedQuery));
+      }
+    }
+
+    return result;
+  }, [tasks, filter, searchQuery]);
 
   // Callbacks for Task mutations, wrapped with useCallback to avoid re-renders
   const handleToggle = useCallback(async (id: string) => {
@@ -63,16 +90,138 @@ export default function ChecklistScreen() {
 
   const handleCloseAlertsForm = useCallback(() => {
     setEditingTask(null);
+    setIsBatchAlertsVisible(false);
   }, []);
 
   const handleSaveAlerts = useCallback(async (taskId: string, alerts: string[]) => {
-    await updateTaskAlerts(taskId, alerts);
+    if (taskId === 'batch_selection') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await batchUpdateAlerts(Array.from(selectedTaskIds), alerts);
+      setSelectedTaskIds(new Set());
+      setIsMultiSelectMode(false);
+    } else {
+      await updateTaskAlerts(taskId, alerts);
+    }
     setEditingTask(null);
-  }, [updateTaskAlerts]);
+    setIsBatchAlertsVisible(false);
+  }, [updateTaskAlerts, batchUpdateAlerts, selectedTaskIds]);
 
   const handleAddTask = useCallback(async (title: string, type: TaskType) => {
     await addTask(title, type);
   }, [addTask]);
+
+  // Selection handlers
+  const handleSelect = useCallback((id: string) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      
+      if (next.size === 0) {
+        setIsMultiSelectMode(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleLongPress = useCallback((id: string) => {
+    setIsMultiSelectMode(true);
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Batch actions
+  const handleBatchToggleComplete = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return;
+    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.id));
+    const allCompleted = selectedTasks.every(t => t.completed);
+    const nextCompleted = !allCompleted;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await batchToggleTasks(Array.from(selectedTaskIds), nextCompleted);
+    setSelectedTaskIds(new Set());
+    setIsMultiSelectMode(false);
+  }, [selectedTaskIds, tasks, batchToggleTasks]);
+
+  const handleBatchReschedule = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return;
+    Alert.alert(
+      'Batch Reschedule Type',
+      `Set task type for all ${selectedTaskIds.size} selected items:`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: '↻ Daily',
+          onPress: async () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            await batchRescheduleTasks(Array.from(selectedTaskIds), 'daily');
+            setSelectedTaskIds(new Set());
+            setIsMultiSelectMode(false);
+          },
+        },
+        {
+          text: '⚡ One-Time',
+          onPress: async () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            await batchRescheduleTasks(Array.from(selectedTaskIds), 'onetime');
+            setSelectedTaskIds(new Set());
+            setIsMultiSelectMode(false);
+          },
+        },
+      ]
+    );
+  }, [selectedTaskIds, batchRescheduleTasks]);
+
+  const handleBatchConfigureAlerts = useCallback(() => {
+    setIsBatchAlertsVisible(true);
+  }, []);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return;
+    Alert.alert(
+      'Delete Selected Tasks',
+      `Are you sure you want to delete all ${selectedTaskIds.size} selected tasks?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            await batchDeleteTasks(Array.from(selectedTaskIds));
+            setSelectedTaskIds(new Set());
+            setIsMultiSelectMode(false);
+          },
+        },
+      ]
+    );
+  }, [selectedTaskIds, batchDeleteTasks]);
+
+  const handleCancelSelection = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedTaskIds(new Set());
+    setIsMultiSelectMode(false);
+  }, []);
+
+  // Dummy task for batch alerts configuration
+  const batchDummyTask = useMemo(() => {
+    return {
+      id: 'batch_selection',
+      uuid: '',
+      title: `${selectedTaskIds.size} Selected Tasks`,
+      type: 'daily' as TaskType,
+      completed: false,
+      completed_date: null,
+      created_date: '',
+      alerts: [],
+    };
+  }, [selectedTaskIds.size]);
 
   // Async state 1: Loading
   if (loading) {
@@ -114,6 +263,25 @@ export default function ChecklistScreen() {
           </View>
         </View>
         <Text style={styles.headerSubtitle}>Keep track of your execution goals</Text>
+      </View>
+
+      {/* Real-time Regex Search Bar */}
+      <View style={styles.searchBarContainer}>
+        <IconSymbol name="magnifyingglass" size={18} color="#9BA1A6" style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Filter tasks (Regex supported)..."
+          placeholderTextColor="#687076"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchButton}>
+            <IconSymbol name="circle" size={16} color="#9BA1A6" />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Filter Tabs */}
@@ -172,22 +340,70 @@ export default function ChecklistScreen() {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onConfigureAlerts={handleConfigureAlerts}
+                isSelected={selectedTaskIds.has(item.id)}
+                isMultiSelectMode={isMultiSelectMode}
+                onSelect={handleSelect}
+                onLongPress={handleLongPress}
               />
             )}
             keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+              styles.listContent,
+              isMultiSelectMode && { paddingBottom: 170 }, // Add bottom padding to prevent FAB overlay overlap
+            ]}
           />
         )}
       </View>
 
-      {/* Floating Action Button (FAB) */}
-      <TouchableOpacity
-        style={styles.fab}
-        activeOpacity={0.8}
-        onPress={() => setIsFormVisible(true)}
-      >
-        <IconSymbol name="plus" size={24} color="#FFFFFF" />
-      </TouchableOpacity>
+      {/* Floating Action Button (FAB) - Hide in multi-select mode */}
+      {!isMultiSelectMode && (
+        <TouchableOpacity
+          style={styles.fab}
+          activeOpacity={0.8}
+          onPress={() => setIsFormVisible(true)}
+        >
+          <IconSymbol name="plus" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+
+      {/* Multi-Select Mass Actions Bar */}
+      {isMultiSelectMode && (
+        <View style={styles.batchBar}>
+          <View style={styles.batchBarHeader}>
+            <Text style={styles.batchBarText}>
+              {selectedTaskIds.size} {selectedTaskIds.size === 1 ? 'task' : 'tasks'} selected
+            </Text>
+            <TouchableOpacity onPress={handleCancelSelection} style={styles.cancelBatchButton}>
+              <Text style={styles.cancelBatchButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.batchButtonsContainer}>
+            <TouchableOpacity onPress={handleBatchToggleComplete} style={styles.batchButton}>
+              <IconSymbol name="checkmark.circle.fill" size={14} color="#ECEDEE" />
+              <Text style={styles.batchButtonText}>Toggle Status</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={handleBatchReschedule} style={styles.batchButton}>
+              <IconSymbol name="calendar" size={14} color="#ECEDEE" />
+              <Text style={styles.batchButtonText}>Change Type</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={handleBatchConfigureAlerts} style={styles.batchButton}>
+              <IconSymbol name="bell.fill" size={14} color="#ECEDEE" />
+              <Text style={styles.batchButtonText}>Set Alarms</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBatchDelete}
+              style={[styles.batchButton, styles.batchButtonDestructive]}
+            >
+              <IconSymbol name="trash.fill" size={14} color="#EF4444" />
+              <Text style={[styles.batchButtonText, styles.batchButtonTextDestructive]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Add Task Modal Form */}
       <TaskForm
@@ -200,6 +416,15 @@ export default function ChecklistScreen() {
       {editingTask && (
         <BatchAlertForm
           task={editingTask}
+          onClose={handleCloseAlertsForm}
+          onSaveAlerts={handleSaveAlerts}
+        />
+      )}
+
+      {/* Batch Alerts Scheduler Modal Form */}
+      {isBatchAlertsVisible && (
+        <BatchAlertForm
+          task={batchDummyTask}
           onClose={handleCloseAlertsForm}
           onSaveAlerts={handleSaveAlerts}
         />
@@ -246,7 +471,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 16,
+    paddingBottom: 12,
   },
   headerTitleRow: {
     flexDirection: 'row',
@@ -278,6 +503,31 @@ const styles = StyleSheet.create({
     color: '#9BA1A6',
     marginTop: 4,
     fontFamily: Fonts.sans,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E20',
+    borderColor: '#2C2C2E',
+    borderWidth: 1,
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    height: 42,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#ECEDEE',
+    fontSize: 13,
+    fontFamily: Fonts.sans,
+    height: '100%',
+  },
+  clearSearchButton: {
+    padding: 4,
   },
   filterContainer: {
     flexDirection: 'row',
@@ -362,5 +612,78 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 5,
+  },
+  batchBar: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: '#1E1E20',
+    borderColor: '#10B981',
+    borderWidth: 1.5,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'column',
+    gap: 12,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+    zIndex: 999,
+  },
+  batchBarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  batchBarText: {
+    color: '#10B981',
+    fontSize: 14,
+    fontWeight: 'bold',
+    fontFamily: Fonts.rounded,
+  },
+  cancelBatchButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: '#2C2C2E',
+  },
+  cancelBatchButtonText: {
+    color: '#ECEDEE',
+    fontSize: 11,
+    fontWeight: 'bold',
+    fontFamily: Fonts.sans,
+  },
+  batchButtonsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  batchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#2C2C2E',
+    flex: 1,
+    minWidth: '45%',
+  },
+  batchButtonDestructive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    borderWidth: 1,
+  },
+  batchButtonText: {
+    color: '#ECEDEE',
+    fontSize: 11,
+    fontWeight: 'bold',
+    fontFamily: Fonts.sans,
+  },
+  batchButtonTextDestructive: {
+    color: '#EF4444',
   },
 });
