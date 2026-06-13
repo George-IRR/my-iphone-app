@@ -223,14 +223,14 @@ export function useTaskEngine() {
     }
   };
 
-  const batchToggle = async (ids: string[], completed: boolean) => {
+  const batchToggle = async (uuids: string[], completed: boolean) => {
     try {
       setError(null);
-      await batchToggleTasks(ids, completed);
+      await batchToggleTasks(uuids, completed);
       const completedDate = completed ? new Date().toISOString() : null;
-      const idSet = new Set(ids);
+      const uuidSet = new Set(uuids);
       setTasks(prev => prev.map(task => {
-        if (idSet.has(task.id)) {
+        if (uuidSet.has(task.uuid)) {
           return { ...task, completed, completed_date: completedDate };
         }
         return task;
@@ -241,28 +241,31 @@ export function useTaskEngine() {
     }
   };
 
-  const batchDelete = async (ids: string[]) => {
+  const batchDelete = async (uuids: string[]) => {
     try {
       setError(null);
-      await batchDeleteTasks(ids);
-      for (const id of ids) {
-        await cancelTaskNotifications(id);
+      await batchDeleteTasks(uuids);
+      for (const uuid of uuids) {
+        const task = tasks.find(t => t.uuid === uuid);
+        if (task) {
+          await cancelTaskNotifications(task.id);
+        }
       }
-      const idSet = new Set(ids);
-      setTasks(prev => prev.filter(task => !idSet.has(task.id)));
+      const uuidSet = new Set(uuids);
+      setTasks(prev => prev.filter(task => !uuidSet.has(task.uuid)));
     } catch (err) {
       console.error('Failed to batch delete tasks:', err);
       setError('Failed to batch delete tasks.');
     }
   };
 
-  const batchReschedule = async (ids: string[], type: TaskType) => {
+  const batchReschedule = async (uuids: string[], type: TaskType) => {
     try {
       setError(null);
-      await batchRescheduleTasks(ids, type);
-      const idSet = new Set(ids);
+      await batchRescheduleTasks(uuids, type);
+      const uuidSet = new Set(uuids);
       setTasks(prev => prev.map(task => {
-        if (idSet.has(task.id)) {
+        if (uuidSet.has(task.uuid)) {
           return { ...task, type };
         }
         return task;
@@ -273,19 +276,19 @@ export function useTaskEngine() {
     }
   };
 
-  const batchAlerts = async (ids: string[], alerts: string[]) => {
+  const batchAlerts = async (uuids: string[], alerts: string[]) => {
     try {
       setError(null);
-      await batchUpdateAlerts(ids, alerts);
-      for (const id of ids) {
-        const task = tasks.find(t => t.id === id);
+      await batchUpdateAlerts(uuids, alerts);
+      for (const uuid of uuids) {
+        const task = tasks.find(t => t.uuid === uuid);
         if (task) {
-          await scheduleTaskNotifications(id, task.title, alerts);
+          await scheduleTaskNotifications(task.id, task.title, alerts);
         }
       }
-      const idSet = new Set(ids);
+      const uuidSet = new Set(uuids);
       setTasks(prev => prev.map(task => {
-        if (idSet.has(task.id)) {
+        if (uuidSet.has(task.uuid)) {
           return { ...task, alerts };
         }
         return task;

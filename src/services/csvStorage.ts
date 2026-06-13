@@ -1,14 +1,14 @@
-import { File, Directory, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Crypto from 'expo-crypto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Task, CompletionLog, TaskType } from '../features/checklist/types';
 
 export const PERMANENT_MIRROR_KEY = '@sync_permanent_mirror_uri';
 
-const tasksFile = new File(Paths.document, 'tasks.csv');
-const completionsFile = new File(Paths.document, 'completions.csv');
-const lastActiveFile = new File(Paths.document, 'last_active.txt');
-const traceLogFile = new File(Paths.document, 'mirror_trace.log');
+const TASKS_FILE_URI = FileSystem.documentDirectory + 'tasks.csv';
+const COMPLETIONS_FILE_URI = FileSystem.documentDirectory + 'completions.csv';
+const LAST_ACTIVE_FILE_URI = FileSystem.documentDirectory + 'last_active.txt';
+const TRACE_LOG_FILE_URI = FileSystem.documentDirectory + 'mirror_trace.log';
 
 /**
  * Escapes a string value to be RFC 4180 CSV compliant.
@@ -233,14 +233,15 @@ export function deserializeCsvToCompletions(csvText: string): CompletionLog[] {
   return logs;
 }
 
-// File System CRUD implementations using Modern File and Directory API
+// File System CRUD implementations using procedural FileSystem API
 
 export async function readTasks(): Promise<Task[]> {
   try {
-    if (!tasksFile.exists) {
+    const info = await FileSystem.getInfoAsync(TASKS_FILE_URI);
+    if (!info.exists) {
       return [];
     }
-    const csvContent = await tasksFile.text();
+    const csvContent = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
     return deserializeCsvToTasks(csvContent);
   } catch (error) {
     console.error('Error reading tasks CSV:', error);
@@ -266,10 +267,7 @@ export async function writeTasks(tasks: Task[]): Promise<void> {
   return enqueueWrite(async () => {
     try {
       const csvContent = serializeTasksToCsv(tasks);
-      if (!tasksFile.exists) {
-        tasksFile.create();
-      }
-      tasksFile.write(csvContent);
+      await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
       await writeToPermanentMirror(csvContent);
     } catch (error) {
       console.error('Error writing tasks CSV:', error);
@@ -279,10 +277,11 @@ export async function writeTasks(tasks: Task[]): Promise<void> {
 
 export async function readCompletions(): Promise<CompletionLog[]> {
   try {
-    if (!completionsFile.exists) {
+    const info = await FileSystem.getInfoAsync(COMPLETIONS_FILE_URI);
+    if (!info.exists) {
       return [];
     }
-    const csvContent = await completionsFile.text();
+    const csvContent = await FileSystem.readAsStringAsync(COMPLETIONS_FILE_URI);
     return deserializeCsvToCompletions(csvContent);
   } catch (error) {
     console.error('Error reading completions CSV:', error);
@@ -294,10 +293,7 @@ export async function writeCompletions(logs: CompletionLog[]): Promise<void> {
   return enqueueWrite(async () => {
     try {
       const csvContent = serializeCompletionsToCsv(logs);
-      if (!completionsFile.exists) {
-        completionsFile.create();
-      }
-      completionsFile.write(csvContent);
+      await FileSystem.writeAsStringAsync(COMPLETIONS_FILE_URI, csvContent);
     } catch (error) {
       console.error('Error writing completions CSV:', error);
     }
@@ -306,8 +302,9 @@ export async function writeCompletions(logs: CompletionLog[]): Promise<void> {
 
 export async function readLastActiveDate(): Promise<string | null> {
   try {
-    if (!lastActiveFile.exists) return null;
-    return await lastActiveFile.text();
+    const info = await FileSystem.getInfoAsync(LAST_ACTIVE_FILE_URI);
+    if (!info.exists) return null;
+    return await FileSystem.readAsStringAsync(LAST_ACTIVE_FILE_URI);
   } catch {
     return null;
   }
@@ -315,10 +312,7 @@ export async function readLastActiveDate(): Promise<string | null> {
 
 export async function writeLastActiveDate(dateStr: string): Promise<void> {
   try {
-    if (!lastActiveFile.exists) {
-      lastActiveFile.create();
-    }
-    lastActiveFile.write(dateStr);
+    await FileSystem.writeAsStringAsync(LAST_ACTIVE_FILE_URI, dateStr);
   } catch (error) {
     console.error('Error writing last active date:', error);
   }
@@ -332,8 +326,9 @@ export function setVerboseLogging(active: boolean) {
 
 export async function readTraceLogs(): Promise<string> {
   try {
-    if (!traceLogFile.exists) return '';
-    return await traceLogFile.text();
+    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
+    if (!info.exists) return '';
+    return await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
   } catch {
     return '';
   }
@@ -341,8 +336,9 @@ export async function readTraceLogs(): Promise<string> {
 
 export async function clearTraceLogs(): Promise<void> {
   try {
-    if (traceLogFile.exists) {
-      traceLogFile.delete();
+    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
+    if (info.exists) {
+      await FileSystem.deleteAsync(TRACE_LOG_FILE_URI, { idempotent: true });
     }
   } catch (err) {
     console.error('Failed to clear trace logs:', err);
@@ -359,12 +355,12 @@ export async function writeTraceLog(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] ${message}\n`;
     
-    if (traceLogFile.exists) {
-      const existing = await traceLogFile.text();
-      traceLogFile.write(existing + line);
+    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
+    if (info.exists) {
+      const existing = await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
+      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, existing + line);
     } else {
-      traceLogFile.create();
-      traceLogFile.write(line);
+      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, line);
     }
   } catch (err) {
     console.error('Failed to write trace log:', err);
@@ -377,22 +373,20 @@ export async function writeTraceLog(message: string): Promise<void> {
  */
 export async function enforceLogSizeLimit(): Promise<void> {
   try {
-    if (traceLogFile.exists) {
-      const fileInfo = traceLogFile.info();
-      if (fileInfo.size && fileInfo.size > 2 * 1024 * 1024) { // 2MB
-        const logContent = await traceLogFile.text();
-        const halfIndex = Math.floor(logContent.length / 2);
-        let cutIndex = logContent.indexOf('\n', halfIndex);
-        if (cutIndex === -1) {
-          cutIndex = halfIndex;
-        } else {
-          cutIndex += 1;
-        }
-        const prunedContent = logContent.substring(cutIndex);
-        traceLogFile.write(prunedContent);
-        console.log('mirror_trace.log size exceeded 2MB, pruned older 50%');
-        await writeTraceLog('[SYSTEM] Log size exceeded 2MB. Pruned older 50% of trace lines.');
+    const info = await FileSystem.getInfoAsync(TRACE_LOG_FILE_URI);
+    if (info.exists && info.size && info.size > 2 * 1024 * 1024) { // 2MB
+      const logContent = await FileSystem.readAsStringAsync(TRACE_LOG_FILE_URI);
+      const halfIndex = Math.floor(logContent.length / 2);
+      let cutIndex = logContent.indexOf('\n', halfIndex);
+      if (cutIndex === -1) {
+        cutIndex = halfIndex;
+      } else {
+        cutIndex += 1;
       }
+      const prunedContent = logContent.substring(cutIndex);
+      await FileSystem.writeAsStringAsync(TRACE_LOG_FILE_URI, prunedContent);
+      console.log('mirror_trace.log size exceeded 2MB, pruned older 50%');
+      await writeTraceLog('[SYSTEM] Log size exceeded 2MB. Pruned older 50% of trace lines.');
     }
   } catch (err) {
     console.error('Failed to enforce log size limit:', err);
@@ -415,30 +409,24 @@ export async function writeReconciliation(
     
     try {
       // 1. Create backups
-      if (tasksFile.exists) {
-        localBackup = await tasksFile.text();
+      const localInfo = await FileSystem.getInfoAsync(TASKS_FILE_URI);
+      if (localInfo.exists) {
+        localBackup = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
       }
       
-      let externalFile: File | null = null;
       if (externalUri) {
-        externalFile = new File(externalUri);
-        if (externalFile.exists) {
-          externalBackup = await externalFile.text();
+        const extInfo = await FileSystem.getInfoAsync(externalUri);
+        if (extInfo.exists) {
+          externalBackup = await FileSystem.readAsStringAsync(externalUri);
         }
       }
       
       // 2. Perform writes
       const localCsv = serializeTasksToCsv(localTasks);
-      if (!tasksFile.exists) {
-        tasksFile.create();
-      }
-      tasksFile.write(localCsv);
+      await FileSystem.writeAsStringAsync(TASKS_FILE_URI, localCsv);
       
-      if (externalFile && externalContent !== null) {
-        if (!externalFile.exists) {
-          externalFile.create();
-        }
-        externalFile.write(externalContent);
+      if (externalUri && externalContent !== null) {
+        await FileSystem.writeAsStringAsync(externalUri, externalContent);
       }
       
       await writeToPermanentMirror(localCsv);
@@ -450,14 +438,11 @@ export async function writeReconciliation(
       
       // 3. Rollback local
       if (localBackup !== null) {
-        if (!tasksFile.exists) tasksFile.create();
-        tasksFile.write(localBackup);
+        await FileSystem.writeAsStringAsync(TASKS_FILE_URI, localBackup);
       }
       // Rollback external
       if (externalUri && externalBackup !== null) {
-        const externalFile = new File(externalUri);
-        if (!externalFile.exists) externalFile.create();
-        externalFile.write(externalBackup);
+        await FileSystem.writeAsStringAsync(externalUri, externalBackup);
       }
       
       throw new Error(`Sync transaction aborted due to write failures. Database rolled back.`);
@@ -472,28 +457,28 @@ export async function writeReconciliation(
  */
 export async function rotateAndCreateBackup(): Promise<void> {
   try {
-    if (!tasksFile.exists) return;
-    const tasksContent = await tasksFile.text();
+    const info = await FileSystem.getInfoAsync(TASKS_FILE_URI);
+    if (!info.exists) return;
+    const tasksContent = await FileSystem.readAsStringAsync(TASKS_FILE_URI);
     
     // Rotate backup files
     for (let i = 4; i >= 1; i--) {
-      const sourceFile = new File(Paths.document, `backup_${i}.csv`);
-      const destFile = new File(Paths.document, `backup_${i+1}.csv`);
+      const sourceUri = FileSystem.documentDirectory + `backup_${i}.csv`;
+      const destUri = FileSystem.documentDirectory + `backup_${i+1}.csv`;
       
-      if (sourceFile.exists) {
-        if (destFile.exists) {
-          destFile.delete();
+      const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
+      if (sourceInfo.exists) {
+        const destInfo = await FileSystem.getInfoAsync(destUri);
+        if (destInfo.exists) {
+          await FileSystem.deleteAsync(destUri, { idempotent: true });
         }
-        sourceFile.move(destFile);
+        await FileSystem.moveAsync({ from: sourceUri, to: destUri });
       }
     }
     
     // Write current state to backup_1.csv
-    const backup1File = new File(Paths.document, 'backup_1.csv');
-    if (!backup1File.exists) {
-      backup1File.create();
-    }
-    backup1File.write(tasksContent);
+    const backup1Uri = FileSystem.documentDirectory + 'backup_1.csv';
+    await FileSystem.writeAsStringAsync(backup1Uri, tasksContent);
     await writeTraceLog('[BACKUP] Created rolling database backup snapshot (backup_1.csv).');
   } catch (err) {
     console.error('Failed to rotate and create backup:', err);
@@ -508,19 +493,19 @@ export async function listBackups(): Promise<{ filename: string; timestamp: stri
   try {
     for (let i = 1; i <= 5; i++) {
       const filename = `backup_${i}.csv`;
-      const backupFile = new File(Paths.document, filename);
+      const backupUri = FileSystem.documentDirectory + filename;
       
-      if (backupFile.exists) {
-        const fileInfo = backupFile.info();
+      const info = await FileSystem.getInfoAsync(backupUri);
+      if (info.exists) {
         let mtime = new Date().toLocaleString();
-        if (fileInfo.modificationTime) {
-          const mtimeMs = fileInfo.modificationTime * (fileInfo.modificationTime < 1000000000000 ? 1000 : 1);
+        if (info.modificationTime) {
+          const mtimeMs = info.modificationTime * (info.modificationTime < 1000000000000 ? 1000 : 1);
           mtime = new Date(mtimeMs).toLocaleString();
         }
         backups.push({
           filename,
           timestamp: mtime,
-          size: fileInfo.size || 0,
+          size: info.size || 0,
         });
       }
     }
@@ -534,16 +519,14 @@ export async function listBackups(): Promise<{ filename: string; timestamp: stri
  * Overwrites the active tasks database with the selected backup snapshot.
  */
 export async function restoreFromBackup(backupName: string): Promise<void> {
-  const backupFile = new File(Paths.document, backupName);
-  if (!backupFile.exists) {
+  const backupUri = FileSystem.documentDirectory + backupName;
+  const info = await FileSystem.getInfoAsync(backupUri);
+  if (!info.exists) {
     throw new Error(`Backup file "${backupName}" does not exist.`);
   }
   
-  const content = await backupFile.text();
-  if (!tasksFile.exists) {
-    tasksFile.create();
-  }
-  tasksFile.write(content);
+  const content = await FileSystem.readAsStringAsync(backupUri);
+  await FileSystem.writeAsStringAsync(TASKS_FILE_URI, content);
   await writeTraceLog(`[BACKUP] Successfully restored tasks database from snapshot: ${backupName}`);
 }
 
@@ -553,26 +536,31 @@ export async function restoreFromBackup(backupName: string): Promise<void> {
  */
 export async function mirrorDatabaseFiles(): Promise<void> {
   try {
-    const mirrorDir = new Directory(Paths.document, 'safe_keeping_mirror');
-    if (!mirrorDir.exists) {
-      mirrorDir.create({ intermediates: true, idempotent: true });
+    const mirrorDirUri = FileSystem.documentDirectory + 'safe_keeping_mirror/';
+    const dirInfo = await FileSystem.getInfoAsync(mirrorDirUri);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(mirrorDirUri, { intermediates: true });
     }
 
-    const tasksMirrorFile = new File(mirrorDir, 'tasks_mirror.csv');
-    const completionsMirrorFile = new File(mirrorDir, 'completions_mirror.csv');
+    const tasksMirrorUri = mirrorDirUri + 'tasks_mirror.csv';
+    const completionsMirrorUri = mirrorDirUri + 'completions_mirror.csv';
 
-    if (tasksFile.exists) {
-      if (tasksMirrorFile.exists) {
-        tasksMirrorFile.delete();
+    const tasksInfo = await FileSystem.getInfoAsync(TASKS_FILE_URI);
+    if (tasksInfo.exists) {
+      const tmInfo = await FileSystem.getInfoAsync(tasksMirrorUri);
+      if (tmInfo.exists) {
+        await FileSystem.deleteAsync(tasksMirrorUri, { idempotent: true });
       }
-      tasksFile.copy(tasksMirrorFile);
+      await FileSystem.copyAsync({ from: TASKS_FILE_URI, to: tasksMirrorUri });
     }
     
-    if (completionsFile.exists) {
-      if (completionsMirrorFile.exists) {
-        completionsMirrorFile.delete();
+    const completionsInfo = await FileSystem.getInfoAsync(COMPLETIONS_FILE_URI);
+    if (completionsInfo.exists) {
+      const cmInfo = await FileSystem.getInfoAsync(completionsMirrorUri);
+      if (cmInfo.exists) {
+        await FileSystem.deleteAsync(completionsMirrorUri, { idempotent: true });
       }
-      completionsFile.copy(completionsMirrorFile);
+      await FileSystem.copyAsync({ from: COMPLETIONS_FILE_URI, to: completionsMirrorUri });
     }
 
     await writeTraceLog('[SYSTEM] Database files mirrored to safe_keeping_mirror/ successfully.');
@@ -592,9 +580,7 @@ export async function writeToPermanentMirror(csvContent: string): Promise<void> 
     const uri = await AsyncStorage.getItem(PERMANENT_MIRROR_KEY);
     if (!uri) return;
 
-    const file = new File(uri);
-    // Write contents to the external file
-    file.write(csvContent);
+    await FileSystem.writeAsStringAsync(uri, csvContent);
     await writeTraceLog(`[SYNC] Permanent export mirror file updated successfully at: ${uri}`);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -606,13 +592,13 @@ export async function writeToPermanentMirror(csvContent: string): Promise<void> 
 /**
  * Toggles completion status for multiple tasks in-memory and performs a single file system write.
  */
-export async function batchToggleTasks(ids: string[], completed: boolean): Promise<void> {
+export async function batchToggleTasks(uuids: string[], completed: boolean): Promise<void> {
   return enqueueWrite(async () => {
     const currentTasks = await readTasks();
-    const idSet = new Set(ids);
+    const uuidSet = new Set(uuids);
     const completedDate = completed ? new Date().toISOString() : null;
     const updatedTasks = currentTasks.map(task => {
-      if (idSet.has(task.id)) {
+      if (uuidSet.has(task.uuid)) {
         return {
           ...task,
           completed,
@@ -625,18 +611,18 @@ export async function batchToggleTasks(ids: string[], completed: boolean): Promi
     let logs = await readCompletions();
     const todayStr = new Date().toISOString().split('T')[0];
     if (completed) {
-      for (const id of ids) {
-        const task = currentTasks.find(t => t.id === id);
+      for (const uuid of uuids) {
+        const task = currentTasks.find(t => t.uuid === uuid);
         if (task && !task.completed) {
           logs.push({
-            taskId: id,
+            taskId: uuid,
             completedDate: completedDate || new Date().toISOString(),
           });
         }
       }
     } else {
       logs = logs.filter(log => {
-        const isTarget = idSet.has(log.taskId);
+        const isTarget = uuidSet.has(log.taskId);
         const logDay = log.completedDate.split('T')[0];
         return !(isTarget && logDay === todayStr);
       });
@@ -645,12 +631,8 @@ export async function batchToggleTasks(ids: string[], completed: boolean): Promi
     const tasksCsv = serializeTasksToCsv(updatedTasks);
     const completionsCsv = serializeCompletionsToCsv(logs);
 
-    if (!tasksFile.exists) tasksFile.create();
-    tasksFile.write(tasksCsv);
-
-    if (!completionsFile.exists) completionsFile.create();
-    completionsFile.write(completionsCsv);
-
+    await FileSystem.writeAsStringAsync(TASKS_FILE_URI, tasksCsv);
+    await FileSystem.writeAsStringAsync(COMPLETIONS_FILE_URI, completionsCsv);
     await writeToPermanentMirror(tasksCsv);
   });
 }
@@ -658,16 +640,14 @@ export async function batchToggleTasks(ids: string[], completed: boolean): Promi
 /**
  * Deletes multiple tasks in-memory and commits a single file system write.
  */
-export async function batchDeleteTasks(ids: string[]): Promise<void> {
+export async function batchDeleteTasks(uuids: string[]): Promise<void> {
   return enqueueWrite(async () => {
     const currentTasks = await readTasks();
-    const idSet = new Set(ids);
-    const filteredTasks = currentTasks.filter(task => !idSet.has(task.id));
+    const uuidSet = new Set(uuids);
+    const filteredTasks = currentTasks.filter(task => !uuidSet.has(task.uuid));
 
     const csvContent = serializeTasksToCsv(filteredTasks);
-    if (!tasksFile.exists) tasksFile.create();
-    tasksFile.write(csvContent);
-
+    await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
     await writeToPermanentMirror(csvContent);
   });
 }
@@ -675,12 +655,12 @@ export async function batchDeleteTasks(ids: string[]): Promise<void> {
 /**
  * Changes type (daily vs onetime) for multiple tasks in-memory and commits a single file system write.
  */
-export async function batchRescheduleTasks(ids: string[], type: TaskType): Promise<void> {
+export async function batchRescheduleTasks(uuids: string[], type: TaskType): Promise<void> {
   return enqueueWrite(async () => {
     const currentTasks = await readTasks();
-    const idSet = new Set(ids);
+    const uuidSet = new Set(uuids);
     const updatedTasks = currentTasks.map(task => {
-      if (idSet.has(task.id)) {
+      if (uuidSet.has(task.uuid)) {
         return {
           ...task,
           type,
@@ -690,9 +670,7 @@ export async function batchRescheduleTasks(ids: string[], type: TaskType): Promi
     });
 
     const csvContent = serializeTasksToCsv(updatedTasks);
-    if (!tasksFile.exists) tasksFile.create();
-    tasksFile.write(csvContent);
-
+    await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
     await writeToPermanentMirror(csvContent);
   });
 }
@@ -700,12 +678,12 @@ export async function batchRescheduleTasks(ids: string[], type: TaskType): Promi
 /**
  * Updates alerts/alarms for multiple tasks in-memory and commits a single file system write.
  */
-export async function batchUpdateAlerts(ids: string[], alerts: string[]): Promise<void> {
+export async function batchUpdateAlerts(uuids: string[], alerts: string[]): Promise<void> {
   return enqueueWrite(async () => {
     const currentTasks = await readTasks();
-    const idSet = new Set(ids);
+    const uuidSet = new Set(uuids);
     const updatedTasks = currentTasks.map(task => {
-      if (idSet.has(task.id)) {
+      if (uuidSet.has(task.uuid)) {
         return {
           ...task,
           alerts,
@@ -715,9 +693,7 @@ export async function batchUpdateAlerts(ids: string[], alerts: string[]): Promis
     });
 
     const csvContent = serializeTasksToCsv(updatedTasks);
-    if (!tasksFile.exists) tasksFile.create();
-    tasksFile.write(csvContent);
-
+    await FileSystem.writeAsStringAsync(TASKS_FILE_URI, csvContent);
     await writeToPermanentMirror(csvContent);
   });
 }

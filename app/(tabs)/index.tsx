@@ -19,10 +19,10 @@ import {
   useTaskEngine,
   Task,
   TaskType,
-  TaskItem,
-  TaskForm,
-  BatchAlertForm,
 } from '@/src/features/checklist';
+import { TaskItem } from '@/src/features/checklist/components/TaskItem';
+import { TaskForm } from '@/src/features/checklist/components/TaskForm';
+import { BatchAlertForm } from '@/src/features/checklist/components/BatchAlertForm';
 
 type FilterType = 'all' | 'daily' | 'onetime';
 
@@ -111,13 +111,13 @@ export default function ChecklistScreen() {
   }, [addTask]);
 
   // Selection handlers
-  const handleSelect = useCallback((id: string) => {
+  const handleSelect = useCallback((uuid: string) => {
     setSelectedTaskIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
+      if (next.has(uuid)) {
+        next.delete(uuid);
       } else {
-        next.add(id);
+        next.add(uuid);
       }
       
       if (next.size === 0) {
@@ -127,11 +127,11 @@ export default function ChecklistScreen() {
     });
   }, []);
 
-  const handleLongPress = useCallback((id: string) => {
+  const handleLongPress = useCallback((uuid: string) => {
     setIsMultiSelectMode(true);
     setSelectedTaskIds(prev => {
       const next = new Set(prev);
-      next.add(id);
+      next.add(uuid);
       return next;
     });
   }, []);
@@ -139,7 +139,7 @@ export default function ChecklistScreen() {
   // Batch actions
   const handleBatchToggleComplete = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
-    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.id));
+    const selectedTasks = tasks.filter(t => selectedTaskIds.has(t.uuid));
     const allCompleted = selectedTasks.every(t => t.completed);
     const nextCompleted = !allCompleted;
 
@@ -340,7 +340,7 @@ export default function ChecklistScreen() {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onConfigureAlerts={handleConfigureAlerts}
-                isSelected={selectedTaskIds.has(item.id)}
+                isSelected={selectedTaskIds.has(item.uuid)}
                 isMultiSelectMode={isMultiSelectMode}
                 onSelect={handleSelect}
                 onLongPress={handleLongPress}

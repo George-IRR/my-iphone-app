@@ -48,19 +48,19 @@ export const TaskItem = React.memo(function TaskItem({
   const handlePress = React.useCallback(() => {
     if (isMultiSelectMode && onSelect) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      onSelect(task.id);
+      onSelect(task.uuid);
     } else {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       handleToggle();
     }
-  }, [isMultiSelectMode, onSelect, task.id, handleToggle]);
+  }, [isMultiSelectMode, onSelect, task.uuid, handleToggle]);
 
   const handleLongPress = React.useCallback(() => {
     if (onLongPress) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      onLongPress(task.id);
+      onLongPress(task.uuid);
     }
-  }, [onLongPress, task.id]);
+  }, [onLongPress, task.uuid]);
 
   // Clean description of scheduled alerts
   const formatAlertText = (alertStr: string) => {
@@ -78,12 +78,12 @@ export const TaskItem = React.memo(function TaskItem({
   };
 
   const handleSwipeOpen = (direction: SwipeDirection.LEFT | SwipeDirection.RIGHT) => {
-    if (direction === SwipeDirection.LEFT) {
+    if (direction === SwipeDirection.RIGHT) {
       // Swiped left-to-right (revealing left actions, e.g. checkmark) -> toggle complete
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       handleToggle();
       swipeableRef.current?.close();
-    } else if (direction === SwipeDirection.RIGHT) {
+    } else if (direction === SwipeDirection.LEFT) {
       // Swiped right-to-left (revealing right actions, e.g. trash) -> delete
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       handleDelete();

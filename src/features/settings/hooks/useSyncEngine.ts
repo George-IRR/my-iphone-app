@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DataDiff, SyncEngineState } from '../types';
 import { Task } from '../../checklist/types';
@@ -234,29 +235,42 @@ export function useSyncEngine(onSyncComplete?: () => void) {
     try {
       setState(prev => ({ ...prev, loading: true, error: null }));
       
-      const selectedDir = await FileSystem.Directory.pickDirectoryAsync();
-      
-      if (!selectedDir) {
-        setState(prev => ({ ...prev, loading: false }));
-        return;
-      }
+      let uri = '';
+      if (Platform.OS === 'android') {
+        const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (!permissions.granted) {
+          setState(prev => ({ ...prev, loading: false }));
+          return;
+        }
 
-      const directory = new FileSystem.Directory(selectedDir.uri);
-      const mirrorFile = new FileSystem.File(directory, 'tasks_mirror.csv');
-      const uri = mirrorFile.uri;
+        uri = await FileSystem.StorageAccessFramework.createFileAsync(
+          permissions.directoryUri,
+          'tasks_mirror',
+          'text/csv'
+        );
+      } else {
+        const docResult = await DocumentPicker.getDocumentAsync({
+          type: ['text/csv', 'text/comma-separated-values'],
+          copyToCacheDirectory: false,
+        });
+
+        if (docResult.canceled || !docResult.assets || docResult.assets.length === 0) {
+          setState(prev => ({ ...prev, loading: false }));
+          return;
+        }
+
+        uri = docResult.assets[0].uri;
+      }
 
       await AsyncStorage.setItem(PERMANENT_MIRROR_KEY, uri);
       setPermanentMirrorUri(uri);
-      await writeTraceLog(`[CONFIG] Permanent export mirror file linked in folder: ${directory.name} (File URI: ${uri})`);
+      await writeTraceLog(`[CONFIG] Permanent export mirror file linked (File URI: ${uri})`);
 
       // Write current database immediately to establish sync parity
       const localTasks = await readTasks();
       const localCsv = serializeTasksToCsv(localTasks);
       
-      if (!mirrorFile.exists) {
-        mirrorFile.create();
-      }
-      mirrorFile.write(localCsv);
+      await FileSystem.writeAsStringAsync(uri, localCsv);
       await writeTraceLog(`[SYNC] Initial parity write to permanent export mirror successful.`);
 
     } catch (err) {
